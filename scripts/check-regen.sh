@@ -22,7 +22,7 @@ case "$port" in
     python3 "$root/grok/port/port.py" "$upstream" "$scratch/pack"
     ;;
   codex)
-    python3 "$root/codex/port/verify.py" --source "$upstream"
+    python3 "$root/codex/port/verify.py"
     python3 "$root/codex/port/port.py" "$upstream" --output "$scratch/pack"
     ;;
   *)
@@ -31,5 +31,5 @@ case "$port" in
     ;;
 esac
 
-diff -r "$root/$port/pack" "$scratch/pack"
+diff -r -x node_modules -x __pycache__ "$root/$port/pack" "$scratch/pack"
 echo "$port: committed pack matches a fresh regeneration"
