@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  port:
+    name: ${{ matrix.port }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        port: [claude, codex, grok]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install worktree-audit dependencies
+        run: sudo apt-get update && sudo apt-get install -y ripgrep jq
+
+      - name: Generator tests
+        working-directory: ${{ matrix.port }}/port
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Regeneration matches the committed pack
+        run: scripts/check-regen.sh ${{ matrix.port }}
+
+      - name: Helper script tests
+        working-directory: ${{ matrix.port }}/pack/skills/poteto-mode/scripts
+        run: |
+          bun install --frozen-lockfile
+          bun test orch watch-pr

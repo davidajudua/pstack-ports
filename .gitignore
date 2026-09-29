@@ -1,0 +1,11 @@
+# Local harness settings, never shared.
+.claude/settings.local.json
+
+# Pinned upstream archive fetched by scripts/fetch-upstream.sh.
+/.upstream/
+
+__pycache__/
+node_modules/
+
+# Old trees the Grok generator keeps when a refresh stops partway.
+*.port-backup*
