@@ -776,9 +776,14 @@ SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Bind the server to `0.0.0.0:<port>`, not `127.0.0.1`. Tailscale peers cannot reach a localhost-only bind.\n",
-            ("Bind the server to `0.0.0.0:<port>`, not `127.0.0.1`. Tailscale peers cannot reach a localhost-only bind.\n"
+            ("Bind the server only to this computer's Tailscale IPv4 address, the one `tailscale ip -4` prints, as `<100.x.x.x>:<port>`.\n"
+            "If Tailscale is not up yet, finish **Put the page on the tailnet** first.\n"
+            "Never bind `0.0.0.0`, which answers every network this computer is on, or `127.0.0.1`, which Tailscale peers cannot reach.\n"
+            "The page is plain HTTP, so only the tailnet's WireGuard tunnel keeps the token and cookie below out of cleartext.\n"
+            "Have the server read the address when it starts and exit if it cannot, rather than fall back to another bind.\n"
             "\n"
-            "That bind also answers every other network this computer is on, so the sender key protects only the outbound call. Check every inbound request before the server does anything else:\n"
+            "Other tailnet devices and other programs on this computer can still reach that address, so the sender key protects only the outbound call.\n"
+            "Check every inbound request before the server does anything else:\n"
             "\n"
             "- The first visit carries `?token=<uiToken>`. On a match, set it as an `HttpOnly`, `SameSite=Strict` cookie and redirect to the same path without the query.\n"
             "- Every other request, the page and every button POST, must carry that cookie. Compare it with `uiToken` in constant time.\n"
@@ -792,7 +797,9 @@ SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Probe `http://<100.x.x.x>:<port>/` and expect HTTP 200.",
-            "Probe `http://<100.x.x.x>:<port>/` without the token and expect HTTP 401. Probe it again with `?token=` and the token read from the config file inside the command, never typed out, and expect the redirect that sets the cookie.",
+            ("Probe `http://<100.x.x.x>:<port>/` without the token and expect HTTP 401.\n"
+            "Probe it again with `?token=` and the token read from the config file inside the command, never typed out, and expect the redirect that sets the cookie.\n"
+            "Probe `http://127.0.0.1:<port>/` and expect the connection to be refused, which shows the server is not listening on every interface."),
         ),
     ],
     "figure-it-out/SKILL.md": [],
@@ -1062,22 +1069,137 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
     ],
     "poteto-mode/scripts/orch/store.ts": [
         (
+            "  mkdir,\n"
+            "  open,\n",
+            "  link,\n"
+            "  mkdir,\n",
+        ),
+        (
+            "  rm,\n",
+            "  rm,\n"
+            "  rmdir,\n",
+        ),
+        (
+            "async function atomicWrite(path: string, contents: string): Promise<void> {\n",
+            "async function atomicWrite(\n"
+            "  path: string,\n"
+            "  contents: string,\n"
+            "  { exclusive = false } = {}\n"
+            "): Promise<void> {\n",
+        ),
+        (
+            "    await rename(temporary, path);\n",
+            "    await (exclusive ? link : rename)(temporary, path);\n",
+        ),
+        (
             "  readonly force?: boolean;\n"
             "  readonly onLockStolen?: (holder: string) => void;\n",
             "",
         ),
         (
-            "  const pid = String(process.pid);\n"
-            "  const create = async (): Promise<void> => {\n",
-            "  const guard = join(store, \".orch.lock-acquisition\");\n"
-            "  const token = `${process.pid}\\n${randomUUID()}\\n`;\n"
+            "async function readPointers(\n"
+            "  directory: string\n"
+            "): Promise<readonly InboxPointer[]> {\n",
+            "interface PointerFile {\n"
+            "  readonly name: string;\n"
+            "  readonly pointer: InboxPointer;\n"
+            "}\n"
+            "\n"
+            "async function readPointers(\n"
+            "  directory: string\n"
+            "): Promise<readonly PointerFile[]> {\n",
+        ),
+        (
+            "  const result: InboxPointer[] = [];\n",
+            "  const result: PointerFile[] = [];\n",
+        ),
+        (
+            "    result.push({\n"
+            "      ts: row[0] ?? \"\",\n"
+            "      agent: row[1] ?? \"\",\n"
+            "      unit: row[2] ?? \"\",\n"
+            "      status: row[3] ?? \"\",\n"
+            "      report: row[4] ?? \"\",\n"
+            "    });\n",
+            "    result.push({\n"
+            "      name: entry.name,\n"
+            "      pointer: {\n"
+            "        ts: row[0] ?? \"\",\n"
+            "        agent: row[1] ?? \"\",\n"
+            "        unit: row[2] ?? \"\",\n"
+            "        status: row[3] ?? \"\",\n"
+            "        report: row[4] ?? \"\",\n"
+            "      },\n"
+            "    });\n",
+        ),
+        (
+            "async function acquireLock(\n",
+            "async function replaceEmptyDirectory(\n"
+            "  source: string,\n"
+            "  target: string\n"
+            "): Promise<boolean> {\n"
             "  try {\n"
-            "    await mkdir(guard);\n"
+            "    await rename(source, target);\n"
+            "    return true;\n"
             "  } catch (error) {\n"
-            "    if (errorCode(error) === \"EEXIST\")\n"
-            "      throw new UserError(\"lock acquisition in progress; retry. If its owner crashed, verify no acquisition is running before removing .orch.lock-acquisition\");\n"
+            "    const code = errorCode(error);\n"
+            "    if (code === \"ENOTEMPTY\" || code === \"EEXIST\") return false;\n"
             "    throw error;\n"
             "  }\n"
+            "}\n"
+            "\n"
+            "async function clearDeadOwners(guard: string): Promise<void> {\n"
+            "  let entries: string[] = [];\n"
+            "  try {\n"
+            "    entries = await readdir(guard);\n"
+            "  } catch (error) {\n"
+            "    if (errorCode(error) !== \"ENOENT\") throw error;\n"
+            "  }\n"
+            "  for (const entry of entries) {\n"
+            "    const holder = entry.split(\".\")[0] ?? \"\";\n"
+            "    if (!holderIsDead(holder))\n"
+            "      throw new UserError(\n"
+            "        `lock acquisition in progress by pid ${holder}; retry`\n"
+            "      );\n"
+            "    await rm(join(guard, entry), { force: true });\n"
+            "  }\n"
+            "}\n"
+            "\n"
+            "async function acquireGuard(store: string): Promise<() => Promise<void>> {\n"
+            "  const guard = join(store, \".orch.lock-acquisition\");\n"
+            "  const owner = `${process.pid}.${randomUUID()}`;\n"
+            "  const staged = `${guard}-${owner}`;\n"
+            "  await mkdir(staged);\n"
+            "  try {\n"
+            "    await writeFile(join(staged, owner), \"\");\n"
+            "    for (let attempt = 0; attempt < 3; attempt++) {\n"
+            "      if (await replaceEmptyDirectory(staged, guard)) {\n"
+            "        return async (): Promise<void> => {\n"
+            "          await unlink(join(guard, owner));\n"
+            "          try {\n"
+            "            await rmdir(guard);\n"
+            "          } catch (error) {\n"
+            "            const code = errorCode(error);\n"
+            "            if (code !== \"ENOENT\" && code !== \"ENOTEMPTY\" && code !== \"EEXIST\")\n"
+            "              throw error;\n"
+            "          }\n"
+            "        };\n"
+            "      }\n"
+            "      await clearDeadOwners(guard);\n"
+            "    }\n"
+            "    throw new UserError(\"lock acquisition in progress; retry\");\n"
+            "  } finally {\n"
+            "    await rm(staged, { recursive: true, force: true });\n"
+            "  }\n"
+            "}\n"
+            "\n"
+            "async function acquireLock(\n",
+        ),
+        (
+            "  const pid = String(process.pid);\n"
+            "  const create = async (): Promise<void> => {\n",
+            "  const token = `${process.pid}\\n${randomUUID()}\\n`;\n"
+            "  const releaseGuard = await acquireGuard(store);\n"
             "  try {\n"
             "    let contents: string | null = null;\n"
             "    try {\n"
@@ -1094,15 +1216,14 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "    }\n",
         ),
         (
+            "    const handle = await open(path, \"wx\");\n"
             "    await handle.writeFile(`${pid}\\n`);\n"
             "    await handle.close();\n"
             "  };\n"
             "\n"
             "  const takeOver = async (): Promise<void> => {\n"
-            "    await unlink(path);\n",
-            "",
-        ),
-        (
+            "    await unlink(path);\n"
+            "    try {\n"
             "      await create();\n"
             "    } catch (retryError) {\n"
             "      if (errorCode(retryError) === \"EEXIST\") {\n"
@@ -1110,10 +1231,9 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "          (await readFile(path, \"utf8\")).trim() || \"unknown\";\n"
             "        throw new UserError(`store lock held by pid ${retryHolder}`);\n"
             "      }\n"
-            "      throw retryError;\n",
-            "      await handle.writeFile(token);\n"
-            "    } finally {\n"
-            "      await handle.close();\n",
+            "      throw retryError;\n"
+            "    }\n",
+            "    await atomicWrite(path, token, { exclusive: true });\n",
         ),
         (
             "  };\n"
@@ -1140,7 +1260,7 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "      throw new UserError(`store lock held by pid ${holder}`);\n"
             "    }\n",
             "  } finally {\n"
-            "    await rm(guard, { recursive: true });\n",
+            "    await releaseGuard();\n",
         ),
         (
             "  }\n"
@@ -1160,6 +1280,33 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "        throw error;\n"
             "      }\n",
             "      if (errorCode(error) !== \"ENOENT\") throw error;\n",
+        ),
+        (
+            "        const rows = await readPointers(inbox);\n"
+            "        const drained = join(\n"
+            "          store,\n"
+            "          `.inbox-drain-${process.pid}-${randomUUID()}`\n"
+            "        );\n"
+            "        await rename(inbox, drained);\n"
+            "        try {\n"
+            "          await mkdir(inbox);\n"
+            "        } catch (error) {\n"
+            "          await rename(drained, inbox);\n"
+            "          throw error;\n"
+            "        }\n"
+            "        await rm(drained, { recursive: true, force: true });\n"
+            "        return rows;\n",
+            "        const files = await readPointers(inbox);\n"
+            "        for (const { name } of files) {\n"
+            "          await unlink(join(inbox, name));\n"
+            "        }\n"
+            "        return files.map(({ pointer }) => pointer);\n",
+        ),
+        (
+            "        return readPointers(join(store, \"inbox\"));\n",
+            "        return (await readPointers(join(store, \"inbox\"))).map(\n"
+            "          ({ pointer }) => pointer\n"
+            "        );\n",
         ),
     ],
     "poteto-mode/scripts/orch/orch.ts": [

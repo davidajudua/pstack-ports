@@ -55,9 +55,14 @@ After the user submits the secret, you do not see the value. The value is in tha
 
 Store `{url, key, uiToken}` in that UI's own directory. `uiToken` is this UI's own caller token: at least 32 bytes from a secure random source, made for this UI alone, never the sender key. Buttons POST to this local server. The local server, not the browser, POSTs to the Grok Bot webhook.
 
-Bind the server to `0.0.0.0:<port>`, not `127.0.0.1`. Tailscale peers cannot reach a localhost-only bind.
+Bind the server only to this computer's Tailscale IPv4 address, the one `tailscale ip -4` prints, as `<100.x.x.x>:<port>`.
+If Tailscale is not up yet, finish **Put the page on the tailnet** first.
+Never bind `0.0.0.0`, which answers every network this computer is on, or `127.0.0.1`, which Tailscale peers cannot reach.
+The page is plain HTTP, so only the tailnet's WireGuard tunnel keeps the token and cookie below out of cleartext.
+Have the server read the address when it starts and exit if it cannot, rather than fall back to another bind.
 
-That bind also answers every other network this computer is on, so the sender key protects only the outbound call. Check every inbound request before the server does anything else:
+Other tailnet devices and other programs on this computer can still reach that address, so the sender key protects only the outbound call.
+Check every inbound request before the server does anything else:
 
 - The first visit carries `?token=<uiToken>`. On a match, set it as an `HttpOnly`, `SameSite=Strict` cookie and redirect to the same path without the query.
 - Every other request, the page and every button POST, must carry that cookie. Compare it with `uiToken` in constant time.
@@ -107,7 +112,9 @@ sudo tailscale up --hostname=<short-name> --accept-dns=false --ssh=false
 The command prints a login URL. Send that URL to the user. The user approves the machine in the browser. Do not ask for Tailscale credentials. Do not type them.
 
 After the node is online, confirm with `tailscale status` and `tailscale ip -4`.
-Probe `http://<100.x.x.x>:<port>/` without the token and expect HTTP 401. Probe it again with `?token=` and the token read from the config file inside the command, never typed out, and expect the redirect that sets the cookie.
+Probe `http://<100.x.x.x>:<port>/` without the token and expect HTTP 401.
+Probe it again with `?token=` and the token read from the config file inside the command, never typed out, and expect the redirect that sets the cookie.
+Probe `http://127.0.0.1:<port>/` and expect the connection to be refused, which shows the server is not listening on every interface.
 
 If the login URL expires, run `tailscale up` again and send the new URL.
 

@@ -6,48 +6,53 @@ import { openStore } from "./store.ts";
 
 const SCRIPT = join(import.meta.dir, "orch.ts");
 const directories: string[] = [];
-let crashPreload = "";
+let crashDirectory = "";
 
-// The preload routes store.ts's node:fs/promises import through a shim that
-// SIGKILLs the process just before the ORCH_CRASH_AT-th write to a path
-// containing ORCH_CRASH_MATCH, so no cleanup code gets to run.
-beforeAll(async () => {
-  const directory = await mkdtemp(join(tmpdir(), "orch-crash-"));
-  const shim = join(directory, "crash-fs.ts");
-  crashPreload = join(directory, "preload.ts");
+beforeAll(async function writeKillBeforeNthWritePreload() {
+  crashDirectory = await mkdtemp(join(tmpdir(), "orch-crash-"));
   await writeFile(
-    shim,
+    join(crashDirectory, "crash-fs.ts"),
     `import * as fs from "node:fs/promises";
+export * from "node:fs/promises";
 const at = Number(process.env.ORCH_CRASH_AT);
 const match = process.env.ORCH_CRASH_MATCH ?? "";
 let writes = 0;
-const wrap = <F extends (...args: any[]) => any>(name: string, fn: F): F =>
+const killOnNthMatchingWrite = (path: unknown) => {
+  if (String(path).includes(match) && ++writes === at) process.kill(process.pid, "SIGKILL");
+};
+const wrap = <F extends (...args: any[]) => any>(fn: F): F =>
   ((...args: any[]) => {
-    const write = name === "open" ? /[wax+]/.test(String(args[1] ?? "r")) : !["access", "readFile", "readdir"].includes(name);
-    if (write && String(args[0]).includes(match) && ++writes === at) process.kill(process.pid, "SIGKILL");
+    killOnNthMatchingWrite(args[0]);
     return fn(...args);
   }) as F;
-export const access = wrap("access", fs.access);
-export const mkdir = wrap("mkdir", fs.mkdir);
-export const open = wrap("open", fs.open);
-export const readFile = wrap("readFile", fs.readFile);
-export const readdir = wrap("readdir", fs.readdir);
-export const rename = wrap("rename", fs.rename);
-export const rm = wrap("rm", fs.rm);
-export const rmdir = wrap("rmdir", fs.rmdir);
-export const unlink = wrap("unlink", fs.unlink);
-export const writeFile = wrap("writeFile", fs.writeFile);
+export const open = async (path: any, flags: any = "r", ...rest: any[]) => {
+  if (/[wax+]/.test(String(flags))) killOnNthMatchingWrite(path);
+  const handle = await fs.open(path, flags, ...rest);
+  const fill = handle.writeFile.bind(handle);
+  handle.writeFile = (...args: any[]) => (killOnNthMatchingWrite(path), fill(...args));
+  return handle;
+};
+export const link = wrap(fs.link);
+export const mkdir = wrap(fs.mkdir);
+export const rename = wrap(fs.rename);
+export const rm = wrap(fs.rm);
+export const rmdir = wrap(fs.rmdir);
+export const unlink = wrap(fs.unlink);
+export const writeFile = wrap(fs.writeFile);
 `
   );
   await writeFile(
-    crashPreload,
+    join(crashDirectory, "preload.ts"),
     `import { plugin } from "bun";
 import { readFileSync } from "node:fs";
 plugin({
   name: "orch-crash",
   setup(build) {
     build.onLoad({ filter: /\\/orch\\/store\\.ts$/ }, ({ path }) => ({
-      contents: readFileSync(path, "utf8").replace('from "node:fs/promises"', ${JSON.stringify(`from ${JSON.stringify(shim)}`)}),
+      contents: readFileSync(path, "utf8").replace(
+        'from "node:fs/promises"',
+        \`from \${JSON.stringify(new URL("./crash-fs.ts", import.meta.url).pathname)}\`
+      ),
       loader: "ts",
     }));
   },
@@ -57,7 +62,7 @@ plugin({
 });
 
 afterAll(async () => {
-  await rm(join(crashPreload, ".."), { recursive: true, force: true });
+  await rm(crashDirectory, { recursive: true, force: true });
 });
 
 afterEach(async () => {
@@ -80,22 +85,34 @@ async function deadPid(): Promise<number> {
   return exited.pid;
 }
 
-// Runs `orch` killed just before its nth write to a path containing `match`.
-// Returns false once the run makes fewer than n such writes and completes.
-function killedAt(
+function runOrchKilledAt(
   directory: string,
   nth: number,
   match: string,
   args: readonly string[]
-): boolean {
+): "killed" | "completed" {
   const result = Bun.spawnSync(
-    [process.execPath, "--preload", crashPreload, SCRIPT, "--store", directory, ...args],
-    { env: { ...process.env, ORCH_CRASH_AT: String(nth), ORCH_CRASH_MATCH: match } }
+    [
+      process.execPath,
+      "--preload",
+      join(crashDirectory, "preload.ts"),
+      SCRIPT,
+      "--store",
+      directory,
+      ...args,
+    ],
+    {
+      env: {
+        ...process.env,
+        ORCH_CRASH_AT: String(nth),
+        ORCH_CRASH_MATCH: match,
+      },
+    }
   );
-  if (result.signalCode === "SIGKILL") return true;
+  if (result.signalCode === "SIGKILL") return "killed";
   expect(result.stderr.toString()).not.toContain("error");
   expect(result.exitCode).toBe(0);
-  return false;
+  return "completed";
 }
 
 describe("store lock", () => {
@@ -131,9 +148,7 @@ describe("store lock", () => {
 
   it("lets only one of two racing processes take over a stale lock", async () => {
     const directory = await initializedStore();
-    const exited = Bun.spawn(["true"]);
-    await exited.exited;
-    await writeFile(join(directory, ".orch.lock"), `${exited.pid}\n`);
+    await writeFile(join(directory, ".orch.lock"), `${await deadPid()}\n`);
 
     // Each worker parks inside the stale-lock takeover until the other one
     // reaches it too, which forces both into the takeover window at once.
@@ -182,7 +197,14 @@ try {
     for (let nth = 1; nth < 40; nth++) {
       const directory = await initializedStore();
       await writeFile(join(directory, ".orch.lock"), `${await deadPid()}\n`);
-      if (!killedAt(directory, nth, ".orch.lock", ["unit", "add", "u1", "--track", "build"])) {
+      const run = runOrchKilledAt(directory, nth, ".orch.lock", [
+        "unit",
+        "add",
+        "u1",
+        "--track",
+        "build",
+      ]);
+      if (run === "completed") {
         expect(nth).toBeGreaterThan(1);
         return;
       }
@@ -202,7 +224,8 @@ try {
         await setup.inbox.push({ agent: "worker", unit, status: "done" });
       await setup.close();
       const layout = (await readdir(directory)).sort();
-      if (!killedAt(directory, nth, "/inbox", ["inbox", "drain"])) {
+      const run = runOrchKilledAt(directory, nth, "/inbox", ["inbox", "drain"]);
+      if (run === "completed") {
         expect(nth).toBeGreaterThan(1);
         return;
       }
