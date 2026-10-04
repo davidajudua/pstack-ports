@@ -16,7 +16,7 @@ Each port is self-contained, so you can install or develop one without the other
 
 | Folder | Harness | Skills | Install into | Start with |
 |---|---|---|---|---|
-| [`claude/`](claude/README.md) | Claude Code | 50 | a project's `.claude/` | `/poteto-mode` |
+| [`claude/`](claude/README.md) | Claude Code | 73 | a project's `.claude/` | `/poteto-mode` |
 | [`codex/`](codex/README.md) | Codex | 47, prefixed `pstack-` | `~/.agents/skills/` or a project's `.agents/skills/` | `$poteto-mode` |
 | [`grok/`](grok/README.md) | Grok CLI | 45 | a project's `.grok/` | `/poteto-mode` |
 
