@@ -21,8 +21,9 @@ Skill-tool load carries its steps across compaction, and the regression
 tests for the pack's safety fixes are copied from added-skills/. The
 staged pack is then validated, and only
 a pack that passes replaces the installed skills, agents, mode hooks, and
-settings in the pack directory. A failed refresh leaves the installed pack
-exactly as it was.
+settings in the pack directory and removes the skills RETIRED_SKILLS names,
+which an earlier pack produced and this one retires. A failed refresh leaves
+the installed pack exactly as it was.
 
 The read-only agent's search hook, hooks/pstack-readonly-search.py, is
 maintained by hand and is only checked for presence here.
@@ -61,6 +62,10 @@ SKILL_CREATOR = (
 POTETO_SCRIPTS = ".claude/skills/poteto-mode/scripts"
 ADDED_SKILL_FILES = Path(__file__).resolve().parent / "added-skills"
 DEFAULT_PACK = Path(__file__).resolve().parents[1] / "pack"
+# Skills an earlier pack produced that a refresh removes, each with the reason an installed copy must not stay.
+RETIRED_SKILLS = {
+    "playbook": "it ran a shell command while it loaded, and Claude Code pastes the skill's arguments into that command as typed",
+}
 SEARCH_TOOLS = "Glob and Grep when this session has them, otherwise `rg`, `grep`, or `find` the way your agent definition describes"
 
 
@@ -1648,6 +1653,8 @@ def validate(pack: Path, target: Path) -> None:
         if not (skill / "SKILL.md").is_file():
             problems.append(f"skills/{skill.name}: no SKILL.md")
             continue
+        if skill.name in RETIRED_SKILLS:
+            problems.append(f"skills/{skill.name}: a retired name, which a refresh removes; drop it from RETIRED_SKILLS to produce it again")
         text = (skill / "SKILL.md").read_text(encoding="utf-8")
         if SHELL_COMMAND.search(text):
             problems.append(
@@ -1673,8 +1680,8 @@ def validate(pack: Path, target: Path) -> None:
 
 
 def install(pack: Path, target: Path, replaced: Path) -> None:
-    """Move every staged entry into `target`, restoring the replaced entries if any step fails."""
-    entries = [Path("settings.json")]
+    """Move every staged entry into `target` and every retired skill out of it, restoring the replaced entries if any step fails."""
+    entries = [Path("skills") / name for name in sorted(RETIRED_SKILLS)] + [Path("settings.json")]
     entries += [Path(kind) / entry.name for kind in ("skills", "agents", "hooks") for entry in sorted((pack / kind).iterdir())]
     started: list[Path] = []
     try:
@@ -1684,8 +1691,9 @@ def install(pack: Path, target: Path, replaced: Path) -> None:
             if destination.exists() or destination.is_symlink():
                 old.parent.mkdir(parents=True, exist_ok=True)
                 destination.rename(old)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            (pack / rel).rename(destination)
+            if (pack / rel).exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                (pack / rel).rename(destination)
     except BaseException:
         try:
             for rel in reversed(started):
@@ -1707,6 +1715,7 @@ def port(upstream: Path, target: Path) -> int:
         applied = build(upstream, pack)
         validate(pack, target)
         staged = {entry.name for entry in (pack / "skills").iterdir()}
+        retired = [name for name in sorted(RETIRED_SKILLS) if (target / "skills" / name).exists() or (target / "skills" / name).is_symlink()]
         install(pack, target, work / "replaced")
     except RollbackFailed as error:
         raise SystemExit(f"{error}. The replaced entries are kept in {work / 'replaced'}.") from error
@@ -1714,6 +1723,8 @@ def port(upstream: Path, target: Path) -> int:
         shutil.rmtree(work, ignore_errors=True)
         raise SystemExit(f"{error}\nThe installed pack under {target} was not changed.") from error
     shutil.rmtree(work)
+    for name in retired:
+        print(f"removed skills/{name}, which an earlier pack produced: {RETIRED_SKILLS[name]}")
     extra = sorted({entry.name for entry in (target / "skills").iterdir()} - staged)
     if extra:
         print(f"kept skills this refresh did not produce (delete any that upstream removed): {', '.join(extra)}")

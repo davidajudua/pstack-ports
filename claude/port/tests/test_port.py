@@ -41,6 +41,8 @@ MODE_SECTIONS = {
     "Playbooks": PLAYBOOKS_LEAD,
 }
 FEATURE = "### Feature\n\n1. Read the code.\n"
+# The playbook skill a pack produced before the static playbook skills, which loaded a playbook through a shell command.
+LOADER = "---\nname: playbook\ndescription: Load a playbook.\n---\n\n!`sh .claude/skills/playbook/scripts/load.sh '$ARGUMENTS'`\n"
 OPENING_A_PR = "### Opening a PR\n\n1. Push the branch.\n"
 # The first sentence of a principle's description says when to apply it, and is all the port keeps.
 PRINCIPLE_TRIGGER = "Apply when a foo needs care."
@@ -198,6 +200,33 @@ class PortTest(unittest.TestCase):
 
     def test_failed_move_rolls_back(self) -> None:
         self.assertMoveFailureRollsBack(lambda count, path: count == 4)
+
+    def install_retired_loader(self) -> None:
+        """The retired playbook skill, as a copy-based install leaves it in the target."""
+        write(self.pack / "skills" / "playbook" / "SKILL.md", LOADER)
+        write(self.pack / "skills" / "playbook" / "scripts" / "load.sh", '#!/bin/sh\ncat "$1"\n')
+
+    def test_refresh_removes_the_retired_playbook_loader(self) -> None:
+        self.install_retired_loader()
+        out = self.run_port()
+        self.assertFalse((self.pack / "skills" / "playbook").exists())
+        self.assertIn("removed skills/playbook", out)
+        kept = [line for line in out.splitlines() if line.startswith("kept skills")]
+        self.assertEqual(len(kept), 1, out)
+        self.assertNotIn("playbook", kept[0])
+        self.assertTrue((self.pack / "skills" / "local-only" / "SKILL.md").is_file())
+        self.assertEqual(list(self.pack.glob(".pstack-port-*")), [])
+        after_first = snapshot(self.pack)
+        self.assertNotIn("removed skills/playbook", self.run_port())
+        self.assertEqual(snapshot(self.pack), after_first)
+
+    def test_failed_move_restores_the_retired_playbook_loader(self) -> None:
+        self.install_retired_loader()
+        self.assertMoveFailureRollsBack(lambda count, path: path.name == "settings.json")
+
+    def test_pack_that_produces_a_retired_skill_is_refused(self) -> None:
+        write(self.upstream / "skills" / "playbook" / "SKILL.md", "---\nname: playbook\ndescription: Old.\n---\n\nStatic now.\n")
+        self.assertIn("retired", self.assertRefusedUntouched())
 
     def test_failed_mode_hook_move_rolls_back(self) -> None:
         # The reminder hook is the last entry installed, after the compaction hook beside it.

@@ -20,6 +20,15 @@ The hooks live in settings because hooks in skill frontmatter neither fire on co
 
 Personal skills in `~/.claude/skills/` win over project skills with the same name, so remove or rename any older pstack copy there.
 
+A pack generated before the static playbook skills produced a `playbook` skill that ran a shell command while it loaded, and copying a new pack over it leaves it in place.
+Remove it from such an install:
+
+```sh
+rm -rf <project>/.claude/skills/playbook
+```
+
+`port.py` removes it when it refreshes a target.
+
 The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`, `gh`, and `jq`.
 
 ## Use
@@ -105,7 +114,8 @@ python3 claude/port/port.py "$upstream"
 
 `port.py <upstream-pstack> [pack-dir]` writes to `claude/pack/` by default.
 It builds the pack in a staging directory, applies every substitution as an exact match, and stops on the first upstream text that drifted.
-It then checks the staged pack for broken frontmatter, leftover Cursor paths, tools, and model slugs, a forced worktree removal, em dashes, a skill that runs a shell command while it loads, and a missing search hook.
+It then checks the staged pack for broken frontmatter, leftover Cursor paths, tools, and model slugs, a forced worktree removal, em dashes, a skill that runs a shell command while it loads, a retired skill name, and a missing search hook.
 It also checks the mode's section layout against the compaction bounds in [Mode persistence](#mode-persistence).
 Only a pack that passes replaces the installed skills, agents, mode hooks, and `settings.json`, so a failed run changes nothing.
+The same refresh removes the retired `playbook` skill that a pack generated before the static playbook skills produced, and prints what it removed.
 Fix a drifted entry in `port.py`, never the generated file.
