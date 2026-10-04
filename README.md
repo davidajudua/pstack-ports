@@ -7,7 +7,8 @@ Its core is `poteto-mode`, a mode that matches each task to one of 23 playbooks 
 All credit for the skills, playbooks, and helper scripts goes to the upstream project, which is MIT licensed.
 This repository only translates them for other agent harnesses.
 
-Every port is pinned to pstack 0.15.5 at upstream commit [`ecc249f`](https://github.com/cursor/plugins/tree/ecc249f1e306fc64ddf83c7bed16cacf7c2239db/pstack).
+The Claude Code port is pinned to pstack 0.15.8 at upstream commit [`a586282`](https://github.com/cursor/plugins/tree/a58628271271837ef5f386adca29c0812683a19a/pstack).
+The Codex and Grok ports are pinned to pstack 0.15.5 at upstream commit [`ecc249f`](https://github.com/cursor/plugins/tree/ecc249f1e306fc64ddf83c7bed16cacf7c2239db/pstack).
 
 ## The ports
 
@@ -15,7 +16,7 @@ Each port is self-contained, so you can install or develop one without the other
 
 | Folder | Harness | Skills | Install into | Start with |
 |---|---|---|---|---|
-| [`claude/`](claude/README.md) | Claude Code | 47 | a project's `.claude/` | `/poteto-mode` |
+| [`claude/`](claude/README.md) | Claude Code | 50 | a project's `.claude/` | `/poteto-mode` |
 | [`codex/`](codex/README.md) | Codex | 47, prefixed `pstack-` | `~/.agents/skills/` or a project's `.agents/skills/` | `$poteto-mode` |
 | [`grok/`](grok/README.md) | Grok CLI | 45 | a project's `.grok/` | `/poteto-mode` |
 
@@ -37,12 +38,12 @@ Never edit a file under `pack/` by hand.
 Change the port's substitutions, overrides, or added files, then regenerate.
 
 ```sh
-upstream=$(scripts/fetch-upstream.sh)   # downloads the pinned archive into .upstream/
-python3 claude/port/port.py "$upstream"
-python3 codex/port/port.py "$upstream"
-python3 grok/port/port.py "$upstream"
+python3 claude/port/port.py "$(scripts/fetch-upstream.sh claude)"
+python3 codex/port/port.py "$(scripts/fetch-upstream.sh codex)"
+python3 grok/port/port.py "$(scripts/fetch-upstream.sh grok)"
 ```
 
+`scripts/fetch-upstream.sh <port>` downloads the archive that port is pinned to into `.upstream/` and prints the path of its `pstack/` directory.
 Each generator applies its substitutions as exact matches, so it stops on the first upstream text that drifted instead of producing a half-ported skill.
 The Grok generator refuses to run while git reports uncommitted or untracked files under `grok/pack/`, because it replaces that tree wholesale.
 

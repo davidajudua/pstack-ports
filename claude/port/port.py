@@ -21,8 +21,8 @@ the installed pack exactly as it was.
 The read-only agent's search hook, hooks/pstack-readonly-search.py, is
 maintained by hand and is only checked for presence here.
 
-Upstream pin: cursor/plugins, pstack 0.15.5, commit
-ecc249f1e306fc64ddf83c7bed16cacf7c2239db.
+Upstream pin: cursor/plugins, pstack 0.15.8, commit
+a58628271271837ef5f386adca29c0812683a19a.
 """
 
 from __future__ import annotations
@@ -117,10 +117,10 @@ SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "This is the Claude Code port of the Cursor pstack plugin. Cursor's mechanisms map as follows.\n"
             "\n"
             f"- **Skills.** `.claude/skills/<name>/SKILL.md`. Every pstack skill is in your skill listing. When this mode or a playbook names a skill (**how**, `/unslop`, a `principle-*`), load it with the Skill tool, or read that file in full and apply it. The user can also type `/<name>`. Relative paths in this file (`playbooks/feature.md`, `references/bugbot-triage.md`, `scripts/`) resolve under `.claude/skills/poteto-mode/` when you read them. Shell commands run from the repository root, so the playbooks spell script paths out in full (`{POTETO_SCRIPTS}/...`).\n"
-            "- **Subagents.** The `Agent` tool with `subagent_type`. `poteto-agent`, `comment-sicko`, and `pstack-readonly` are pstack's own, in `.claude/agents/`. `general-purpose` is Claude Code's read-write agent. `pstack-readonly` is Cursor's `readonly: true`: no shell, no file writes, none of the tools that run commands, spawn or steer agents, or schedule work (`Monitor`, `Agent`, `Workflow`, `Skill`, `SendMessage`, and the task and cron tools), search through a `Read` hook that runs only `rg`, `grep`, `find`, and `ls`, MCP kept, and its frontmatter pins `model: sonnet`. An explicit `model` on the Agent call still selects the role (an explainer or a judge on `opus` or `fable`). Subagents run in the background, so Cursor's `run_in_background: true` needs no flag. `isolation: \"worktree\"` gives a subagent its own checkout in place of Cursor's `environment: \"cloud\"`, and `isolation: \"remote\"` runs it in a cloud session when the account allows it. Resume a subagent with `SendMessage` rather than spawning a sibling.\n"
+            "- **Subagents.** The `Agent` tool with `subagent_type`. `poteto-agent`, `comment-sicko`, and `pstack-readonly` are pstack's own, in `.claude/agents/`. `general-purpose` is Claude Code's read-write agent. `pstack-readonly` is Cursor's `readonly: true`: no shell, no file writes, none of the tools that run commands, spawn or steer agents, or schedule work (`Monitor`, `Agent`, `Workflow`, `Skill`, `SendMessage`, and the task and cron tools), search through a `Read` hook that runs only `rg`, `grep`, `find`, and `ls`, MCP kept, and its frontmatter pins `model: sonnet`. An explicit `model` on the Agent call still selects the role (an explainer or a judge on `opus` or `fable`). Subagents run in the background, so Cursor's `run_in_background: true` needs no flag. `isolation: \"worktree\"` gives a subagent its own checkout in place of Cursor's `environment: \"cloud\"`, and `isolation: \"remote\"` runs it in a cloud session when the account allows it. Resume or message an existing subagent with `SendMessage`, and only in the strict cases that the Subagents section names.\n"
             "- **Models.** The values the `Agent` tool accepts: the aliases `fable`, `opus`, `sonnet`, and `haiku`, or a full model ID. The reasoning budget is the session effort level (`/effort`), which subagents inherit. The model rule `/setup-pstack` writes is `~/.claude/rules/pstack-models.md`.\n"
             "- **Todolist.** The task list (`TaskCreate`, `TaskUpdate`, `TaskList`). The pack's `.claude/settings.json` turns those tools on for every session in this repository. When a session lacks them, keep the checklist in your reply and update it there.\n"
-            "- **Commands.** Questions to the human use `AskUserQuestion`. `/loop` and `/goal` are Claude Code's own. `/simplify` is Claude Code's slop-strip, in place of `/deslop`. `/run` and `/verify`, or a project `verify-<app>` skill, drive the real app in place of `control-cli` and `control-ui`. `/tasks` shows background subagents in place of the Cursor dashboard.\n"
+            "- **Commands.** Questions to the human use `AskUserQuestion`. `/loop` is Claude Code's own. `/simplify` is Claude Code's slop-strip, in place of `/deslop`. `/run` and `/verify`, or a project `verify-<app>` skill, drive the real app in place of `control-cli` and `control-ui`. `/tasks` shows background subagents in place of the Cursor dashboard.\n"
             f"- **Transcripts.** {TRANSCRIPT_DIR} The current session is `$CLAUDE_CODE_SESSION_ID.jsonl` there, and its subagents are under `<session>/subagents/`. Never read another project's directory unless asked.\n"
             "- **Store.** The pstack store is `~/.claude/pstack/store/`. Playbooks that write outside the repository (Orchestrate, Multi-phase plan) write there.\n"
             "- **Review bots.** Bugbot, Greptile, and the agentic security review are GitHub-side and unchanged. Cursor Automations have no Claude Code equivalent.\n"
@@ -148,10 +148,6 @@ SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
         (
             "**Control skill.** Pick it by surface. Browser, Electron, and web UIs use `control-ui` from `cursor-team-kit`. CLIs and TUIs use `control-cli` from `cursor-team-kit`.",
             "**Control skill.** Pick it by surface. Browser, Electron, and web UIs use `/verify` or the project's `verify-<app>` skill with a browser-driving tool. CLIs and TUIs use `/run` and `/verify`.",
-        ),
-        (
-            "- [ ] Arm the 30-minute audit tick. In a local session, a real terminal `/loop`. In a cloud root, a cloud-sleeper wake chain.",
-            "- [ ] Arm the 30-minute audit tick. In a local session, a real `/loop 30m` with the tick prompt. In a remote root, a cloud-sleeper wake chain.",
         ),
         (
             "- [ ] Run `/deslop` before each commit and `/no-comments` before review.",
@@ -281,12 +277,8 @@ SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "a slop-strip (Claude Code's bundled `simplify` skill (`/simplify`)), `/no-comments` (the **no-comments** skill), and babysit to green",
         ),
         (
-            "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel. A cloud root uses the existing cloud-sleeper wake chain instead.",
-            "A local root arms each tick as a real `/loop 30m` carrying the tick prompt. A remote root uses the existing cloud-sleeper wake chain instead.",
-        ),
-        (
-            "re-read this playbook from trunk with `git show origin/main:pstack/skills/poteto-mode/playbooks/autopilot-stack.md`,",
-            "re-read this playbook from trunk with `git show origin/main:.claude/skills/poteto-mode/playbooks/autopilot-stack.md`,",
+            "`git show origin/main:pstack/skills/poteto-mode/playbooks/autopilot-stack.md`",
+            "`git show origin/main:.claude/skills/poteto-mode/playbooks/autopilot-stack.md`",
         ),
     ],
     "poteto-mode/playbooks/shipping.md": [
@@ -1176,7 +1168,7 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
 AGENTS = {
     "poteto-agent.md": """---
 name: poteto-agent
-description: Routing target for `/poteto-mode` and any request for poteto's style. Resume an existing `poteto-agent` for the conversation rather than spawning a sibling. Works from the `poteto-mode` skill's `SKILL.md` in full, including its inline Principles index. Substituting `general-purpose` skips that read and drifts.
+description: Routing target for `/poteto-mode` and any request for poteto's style. Spawn a fresh `poteto-agent` for each new task, and resume one only in the strict cases that poteto-mode's Subagents section names. Works from the `poteto-mode` skill's `SKILL.md` in full, including its inline Principles index. Substituting `general-purpose` skips that read and drifts.
 background: true
 ---
 

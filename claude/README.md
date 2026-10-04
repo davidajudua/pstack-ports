@@ -1,6 +1,6 @@
 # pstack for Claude Code
 
-A Claude Code native port of [pstack](https://github.com/cursor/plugins/tree/ecc249f1e306fc64ddf83c7bed16cacf7c2239db/pstack) 0.15.5, Lauren Tan's Cursor plugin of engineering skills and playbooks.
+A Claude Code native port of [pstack](https://github.com/cursor/plugins/tree/a58628271271837ef5f386adca29c0812683a19a/pstack) 0.15.8, Lauren Tan's Cursor plugin of engineering skills and playbooks.
 
 ## Install
 
@@ -32,7 +32,7 @@ The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`,
 
 | Path | What it is |
 |---|---|
-| `pack/skills/` | All 47 upstream skills. `poteto-mode/` holds the mode, its 23 playbooks, references, and scripts. |
+| `pack/skills/` | All 50 upstream skills. `poteto-mode/` holds the mode, its 23 playbooks, references, and scripts. |
 | `pack/agents/` | `poteto-agent` and `comment-sicko` from upstream, plus `pstack-readonly`, the Claude Code form of Cursor's `readonly: true` subagent. |
 | `pack/hooks/pstack-readonly-search.py` | The `Read` hook `pstack-readonly` searches through. It is maintained by hand, not generated. |
 | `pack/settings.json` | The todo-tools environment variable. |
@@ -80,7 +80,7 @@ In an untrusted workspace the hook never runs, so search is off and the agent st
 ## Regenerate
 
 ```sh
-upstream=$(scripts/fetch-upstream.sh)
+upstream=$(scripts/fetch-upstream.sh claude)
 python3 claude/port/port.py "$upstream"
 (cd claude/port && python3 -m unittest discover -s tests)
 ```

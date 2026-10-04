@@ -52,7 +52,7 @@ A live Grok session has not yet been recorded following the Feature playbook end
 ## Regenerate
 
 ```sh
-upstream=$(scripts/fetch-upstream.sh)
+upstream=$(scripts/fetch-upstream.sh grok)
 python3 grok/port/port.py "$upstream"
 (cd grok/port && python3 -m unittest discover -s tests)
 ```

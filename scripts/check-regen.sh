@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Regenerate a port from the pinned upstream into scratch space and fail unless it matches the committed pack byte for byte.
+# Regenerate a port from the upstream it is pinned to into scratch space and fail unless it matches the committed pack byte for byte.
 # Usage: scripts/check-regen.sh <claude|codex|grok> [upstream-pstack-dir]
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 port=${1:?usage: check-regen.sh <claude|codex|grok> [upstream-pstack-dir]}
-upstream=${2:-"$("$root/scripts/fetch-upstream.sh")"}
+upstream=${2:-"$("$root/scripts/fetch-upstream.sh" "$port")"}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
