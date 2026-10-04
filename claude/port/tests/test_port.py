@@ -281,9 +281,16 @@ class PortTest(unittest.TestCase):
         self.assertEqual(text, (self.added / "playbook" / "SKILL.md").read_text(encoding="utf-8"))
         # Claude Code substitutes the skill directory and the raw arguments into the line, then runs it.
         [command] = re.findall(r"^!`(.+)`$", text, re.MULTILINE)
-        command = command.replace("${CLAUDE_SKILL_DIR}", str(skill)).replace("$ARGUMENTS", "Opening a PR")
-        result = subprocess.run(["sh", "-c", command], cwd=self.project, capture_output=True, text=True, check=True)
-        self.assertEqual(result.stdout, PLAYBOOK_HEADER.format("opening-a-pr") + OPENING_A_PR)
+        command = command.replace("${CLAUDE_SKILL_DIR}", str(skill))
+
+        def run_line(arguments: str) -> str:
+            line = command.replace("$ARGUMENTS", arguments)
+            return subprocess.run(["sh", "-c", line], cwd=self.project, capture_output=True, text=True, check=True).stdout
+
+        self.assertEqual(run_line("Opening a PR"), PLAYBOOK_HEADER.format("opening-a-pr") + OPENING_A_PR)
+        for arguments in ("feature; echo INJECTED", "a$(echo SUB)b"):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(run_line(arguments), PLAYBOOK_USAGE)
 
         self.assertEqual(self.load_playbook("feature"), PLAYBOOK_HEADER.format("feature") + FEATURE)
         for args in (["Opening a PR"], ["opening-a-pr.md"]):
