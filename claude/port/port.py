@@ -21,9 +21,9 @@ Skill-tool load carries its steps across compaction, and the regression
 tests for the pack's safety fixes are copied from added-skills/. The
 staged pack is then validated, and only
 a pack that passes replaces the installed skills, agents, mode hooks, and
-settings in the pack directory and removes the skills RETIRED_SKILLS names,
-which an earlier pack produced and this one retires. A failed refresh leaves
-the installed pack exactly as it was.
+settings in the pack directory and removes the retired skills an earlier
+pack produced, which RETIRED_SKILLS recognizes by their contents. A failed
+refresh leaves the installed pack exactly as it was.
 
 The read-only agent's search hook, hooks/pstack-readonly-search.py, is
 maintained by hand and is only checked for presence here.
@@ -34,12 +34,14 @@ a58628271271837ef5f386adca29c0812683a19a.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 TRANSCRIPT_DIR = (
     "Transcripts for this working directory live under `~/.claude/projects/<slug>/`, "
@@ -62,9 +64,25 @@ SKILL_CREATOR = (
 POTETO_SCRIPTS = ".claude/skills/poteto-mode/scripts"
 ADDED_SKILL_FILES = Path(__file__).resolve().parent / "added-skills"
 DEFAULT_PACK = Path(__file__).resolve().parents[1] / "pack"
-# Skills an earlier pack produced that a refresh removes, each with the reason an installed copy must not stay.
+
+class RetiredSkill(NamedTuple):
+    reason: str
+    digests: frozenset[str]
+
+
+# Skills an earlier pack produced that a refresh removes: the reason an installed copy must not stay, and the SHA-256 of
+# each SKILL.md the pack shipped under the name (`git show <commit>:claude/pack/skills/<name>/SKILL.md | sha256sum`).
+# A skill with that name and other contents is the project's own, so a refresh keeps it and lists it with the kept skills.
 RETIRED_SKILLS = {
-    "playbook": "it ran a shell command while it loaded, and Claude Code pastes the skill's arguments into that command as typed",
+    "playbook": RetiredSkill(
+        "it ran a shell command while it loaded, and Claude Code pastes the skill's arguments into that command as typed",
+        frozenset(
+            {
+                "1bd332f725136378b4227414419bf17a396c27d1344f7d35218f914d892a9adf",  # f16c297
+                "dc01de2e733a25ff5c11302ad5b8d21d096633dd6d8a44bf193c3e835ad829df",  # d3c6801
+            }
+        ),
+    ),
 }
 SEARCH_TOOLS = "Glob and Grep when this session has them, otherwise `rg`, `grep`, or `find` the way your agent definition describes"
 
@@ -1679,9 +1697,19 @@ def validate(pack: Path, target: Path) -> None:
         raise SystemExit("refusing to install the refreshed pack:\n  " + "\n  ".join(problems))
 
 
-def install(pack: Path, target: Path, replaced: Path) -> None:
-    """Move every staged entry into `target` and every retired skill out of it, restoring the replaced entries if any step fails."""
-    entries = [Path("skills") / name for name in sorted(RETIRED_SKILLS)] + [Path("settings.json")]
+def retired_skills(target: Path) -> list[str]:
+    """The retired skills installed under `target`, recognized by the contents an earlier pack produced."""
+    found = []
+    for name, retired in sorted(RETIRED_SKILLS.items()):
+        skill = target / "skills" / name / "SKILL.md"
+        if skill.is_file() and hashlib.sha256(skill.read_bytes()).hexdigest() in retired.digests:
+            found.append(name)
+    return found
+
+
+def install(pack: Path, target: Path, replaced: Path, retired: list[str]) -> None:
+    """Move every staged entry into `target` and the `retired` skills out of it, restoring the replaced entries if any step fails."""
+    entries = [Path("skills") / name for name in retired] + [Path("settings.json")]
     entries += [Path(kind) / entry.name for kind in ("skills", "agents", "hooks") for entry in sorted((pack / kind).iterdir())]
     started: list[Path] = []
     try:
@@ -1715,8 +1743,8 @@ def port(upstream: Path, target: Path) -> int:
         applied = build(upstream, pack)
         validate(pack, target)
         staged = {entry.name for entry in (pack / "skills").iterdir()}
-        retired = [name for name in sorted(RETIRED_SKILLS) if (target / "skills" / name).exists() or (target / "skills" / name).is_symlink()]
-        install(pack, target, work / "replaced")
+        retired = retired_skills(target)
+        install(pack, target, work / "replaced", retired)
     except RollbackFailed as error:
         raise SystemExit(f"{error}. The replaced entries are kept in {work / 'replaced'}.") from error
     except BaseException as error:
@@ -1724,7 +1752,7 @@ def port(upstream: Path, target: Path) -> int:
         raise SystemExit(f"{error}\nThe installed pack under {target} was not changed.") from error
     shutil.rmtree(work)
     for name in retired:
-        print(f"removed skills/{name}, which an earlier pack produced: {RETIRED_SKILLS[name]}")
+        print(f"removed skills/{name}, which an earlier pack produced: {RETIRED_SKILLS[name].reason}")
     extra = sorted({entry.name for entry in (target / "skills").iterdir()} - staged)
     if extra:
         print(f"kept skills this refresh did not produce (delete any that upstream removed): {', '.join(extra)}")

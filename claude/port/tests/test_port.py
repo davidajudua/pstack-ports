@@ -41,8 +41,17 @@ MODE_SECTIONS = {
     "Playbooks": PLAYBOOKS_LEAD,
 }
 FEATURE = "### Feature\n\n1. Read the code.\n"
-# The playbook skill a pack produced before the static playbook skills, which loaded a playbook through a shell command.
-LOADER = "---\nname: playbook\ndescription: Load a playbook.\n---\n\n!`sh .claude/skills/playbook/scripts/load.sh '$ARGUMENTS'`\n"
+# The playbook loader skill, byte for byte as the pack shipped it at f16c297 and, with its arguments single-quoted, at d3c6801.
+LOADER_DESCRIPTION = (
+    "Loads a pstack playbook (Feature, Bug fix, Investigation, Opening a PR, and the others) so its steps survive "
+    "compaction. Use as /playbook <name> with the playbook file's basename, for example /playbook feature or "
+    "/playbook opening-a-pr."
+)
+LOADER_UNQUOTED = (
+    f"---\nname: playbook\ndescription: {LOADER_DESCRIPTION}\n---\n\n"
+    '!`sh "${CLAUDE_SKILL_DIR}/scripts/load.sh" $ARGUMENTS`\n'
+)
+LOADER = LOADER_UNQUOTED.replace("$ARGUMENTS", "'$ARGUMENTS'")
 OPENING_A_PR = "### Opening a PR\n\n1. Push the branch.\n"
 # The first sentence of a principle's description says when to apply it, and is all the port keeps.
 PRINCIPLE_TRIGGER = "Apply when a foo needs care."
@@ -201,24 +210,33 @@ class PortTest(unittest.TestCase):
     def test_failed_move_rolls_back(self) -> None:
         self.assertMoveFailureRollsBack(lambda count, path: count == 4)
 
-    def install_retired_loader(self) -> None:
+    def install_retired_loader(self, text: str = LOADER) -> None:
         """The retired playbook skill, as a copy-based install leaves it in the target."""
-        write(self.pack / "skills" / "playbook" / "SKILL.md", LOADER)
+        write(self.pack / "skills" / "playbook" / "SKILL.md", text)
         write(self.pack / "skills" / "playbook" / "scripts" / "load.sh", '#!/bin/sh\ncat "$1"\n')
 
     def test_refresh_removes_the_retired_playbook_loader(self) -> None:
-        self.install_retired_loader()
-        out = self.run_port()
-        self.assertFalse((self.pack / "skills" / "playbook").exists())
-        self.assertIn("removed skills/playbook", out)
-        kept = [line for line in out.splitlines() if line.startswith("kept skills")]
-        self.assertEqual(len(kept), 1, out)
-        self.assertNotIn("playbook", kept[0])
+        for text in (LOADER_UNQUOTED, LOADER):
+            self.install_retired_loader(text)
+            out = self.run_port()
+            self.assertFalse((self.pack / "skills" / "playbook").exists(), text)
+            self.assertIn("removed skills/playbook", out)
+            kept = [line for line in out.splitlines() if line.startswith("kept skills")]
+            self.assertEqual(len(kept), 1, out)
+            self.assertNotIn("playbook", kept[0])
         self.assertTrue((self.pack / "skills" / "local-only" / "SKILL.md").is_file())
         self.assertEqual(list(self.pack.glob(".pstack-port-*")), [])
         after_first = snapshot(self.pack)
         self.assertNotIn("removed skills/playbook", self.run_port())
         self.assertEqual(snapshot(self.pack), after_first)
+
+    def test_refresh_keeps_a_project_skill_named_playbook(self) -> None:
+        own = "---\nname: playbook\ndescription: Mine.\n---\n\nThe project's own playbook skill.\n"
+        write(self.pack / "skills" / "playbook" / "SKILL.md", own)
+        out = self.run_port()
+        self.assertEqual((self.pack / "skills" / "playbook" / "SKILL.md").read_text(encoding="utf-8"), own)
+        self.assertNotIn("removed skills/", out)
+        self.assertIn("did not produce (delete any that upstream removed): local-only, playbook\n", out)
 
     def test_failed_move_restores_the_retired_playbook_loader(self) -> None:
         self.install_retired_loader()
