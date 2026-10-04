@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,59 @@ import { openStore } from "./store.ts";
 
 const SCRIPT = join(import.meta.dir, "orch.ts");
 const directories: string[] = [];
+let crashPreload = "";
+
+// The preload routes store.ts's node:fs/promises import through a shim that
+// SIGKILLs the process just before the ORCH_CRASH_AT-th write to a path
+// containing ORCH_CRASH_MATCH, so no cleanup code gets to run.
+beforeAll(async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orch-crash-"));
+  const shim = join(directory, "crash-fs.ts");
+  crashPreload = join(directory, "preload.ts");
+  await writeFile(
+    shim,
+    `import * as fs from "node:fs/promises";
+const at = Number(process.env.ORCH_CRASH_AT);
+const match = process.env.ORCH_CRASH_MATCH ?? "";
+let writes = 0;
+const wrap = <F extends (...args: any[]) => any>(name: string, fn: F): F =>
+  ((...args: any[]) => {
+    const write = name === "open" ? /[wax+]/.test(String(args[1] ?? "r")) : !["access", "readFile", "readdir"].includes(name);
+    if (write && String(args[0]).includes(match) && ++writes === at) process.kill(process.pid, "SIGKILL");
+    return fn(...args);
+  }) as F;
+export const access = wrap("access", fs.access);
+export const mkdir = wrap("mkdir", fs.mkdir);
+export const open = wrap("open", fs.open);
+export const readFile = wrap("readFile", fs.readFile);
+export const readdir = wrap("readdir", fs.readdir);
+export const rename = wrap("rename", fs.rename);
+export const rm = wrap("rm", fs.rm);
+export const rmdir = wrap("rmdir", fs.rmdir);
+export const unlink = wrap("unlink", fs.unlink);
+export const writeFile = wrap("writeFile", fs.writeFile);
+`
+  );
+  await writeFile(
+    crashPreload,
+    `import { plugin } from "bun";
+import { readFileSync } from "node:fs";
+plugin({
+  name: "orch-crash",
+  setup(build) {
+    build.onLoad({ filter: /\\/orch\\/store\\.ts$/ }, ({ path }) => ({
+      contents: readFileSync(path, "utf8").replace('from "node:fs/promises"', ${JSON.stringify(`from ${JSON.stringify(shim)}`)}),
+      loader: "ts",
+    }));
+  },
+});
+`
+  );
+});
+
+afterAll(async () => {
+  await rm(join(crashPreload, ".."), { recursive: true, force: true });
+});
 
 afterEach(async () => {
   for (const directory of directories.splice(0))
@@ -19,6 +72,30 @@ async function initializedStore(): Promise<string> {
   await store.init();
   await store.close();
   return directory;
+}
+
+async function deadPid(): Promise<number> {
+  const exited = Bun.spawn(["true"]);
+  await exited.exited;
+  return exited.pid;
+}
+
+// Runs `orch` killed just before its nth write to a path containing `match`.
+// Returns false once the run makes fewer than n such writes and completes.
+function killedAt(
+  directory: string,
+  nth: number,
+  match: string,
+  args: readonly string[]
+): boolean {
+  const result = Bun.spawnSync(
+    [process.execPath, "--preload", crashPreload, SCRIPT, "--store", directory, ...args],
+    { env: { ...process.env, ORCH_CRASH_AT: String(nth), ORCH_CRASH_MATCH: match } }
+  );
+  if (result.signalCode === "SIGKILL") return true;
+  expect(result.stderr.toString()).not.toContain("error");
+  expect(result.exitCode).toBe(0);
+  return false;
 }
 
 describe("store lock", () => {
@@ -100,4 +177,47 @@ try {
     expect(outputs.filter((output) => output === "acquired")).toHaveLength(1);
     expect(await readdir(directory)).not.toContain(".orch.lock");
   });
+
+  it("recovers on the next write when a writer dies while taking over a stale lock", async () => {
+    for (let nth = 1; nth < 40; nth++) {
+      const directory = await initializedStore();
+      await writeFile(join(directory, ".orch.lock"), `${await deadPid()}\n`);
+      if (!killedAt(directory, nth, ".orch.lock", ["unit", "add", "u1", "--track", "build"])) {
+        expect(nth).toBeGreaterThan(1);
+        return;
+      }
+      const store = openStore(directory);
+      await store.units.add({ id: "u2", track: "build" });
+      await store.close();
+      expect(await readdir(directory)).not.toContain(".orch.lock");
+    }
+    throw new Error("the writer never completed");
+  }, 60_000);
+
+  it("keeps the inbox in place and readable when a drain dies partway", async () => {
+    for (let nth = 1; nth < 40; nth++) {
+      const directory = await initializedStore();
+      const setup = openStore(directory);
+      for (const unit of ["u1", "u2"])
+        await setup.inbox.push({ agent: "worker", unit, status: "done" });
+      await setup.close();
+      const layout = (await readdir(directory)).sort();
+      if (!killedAt(directory, nth, "/inbox", ["inbox", "drain"])) {
+        expect(nth).toBeGreaterThan(1);
+        return;
+      }
+      expect(
+        (await readdir(directory)).filter((name) => name !== ".orch.lock").sort()
+      ).toEqual(layout);
+      const store = openStore(directory);
+      const left = (await store.inbox.peek()).map((pointer) => pointer.unit);
+      await store.inbox.push({ agent: "worker", unit: "u3", status: "done" });
+      expect((await store.inbox.drain()).map((pointer) => pointer.unit)).toEqual([
+        ...left,
+        "u3",
+      ]);
+      await store.close();
+    }
+    throw new Error("the drain never completed");
+  }, 60_000);
 });
