@@ -69,7 +69,7 @@ The upstream license is [PSTACK-LICENSE](pack/PSTACK-LICENSE).
 ## Regenerate
 
 ```sh
-upstream=$(scripts/fetch-upstream.sh)
+upstream=$(scripts/fetch-upstream.sh codex)
 python3 codex/port/port.py "$upstream"
 python3 codex/port/verify.py --source "$upstream"
 (cd codex/port && python3 -m unittest discover -s tests)

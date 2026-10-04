@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Regenerate a port from the pinned upstream into scratch space and fail unless it matches the committed pack byte for byte.
+# Regenerate a port from the upstream it is pinned to into scratch space and fail unless it matches the committed pack byte for byte.
 # Usage: scripts/check-regen.sh <claude|codex|grok> [upstream-pstack-dir]
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 port=${1:?usage: check-regen.sh <claude|codex|grok> [upstream-pstack-dir]}
-upstream=${2:-"$("$root/scripts/fetch-upstream.sh")"}
+upstream=${2:-"$("$root/scripts/fetch-upstream.sh" "$port")"}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
 case "$port" in
   claude)
     # The read-only search hook is hand-maintained, so the port only checks that it is present.
-    mkdir -p "$scratch/pack"
-    cp -R "$root/claude/pack/hooks" "$scratch/pack/hooks"
+    # The mode hooks beside it are generated, so the scratch pack starts with the search hook alone.
+    mkdir -p "$scratch/pack/hooks"
+    cp "$root/claude/pack/hooks/pstack-readonly-search.py" "$scratch/pack/hooks/"
     python3 "$root/claude/port/port.py" "$upstream" "$scratch/pack"
     ;;
   grok)
