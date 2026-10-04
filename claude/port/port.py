@@ -10,13 +10,15 @@ Builds the whole pack in a staging directory: copies upstream skills/ and
 agents/, then applies every Cursor-to-Claude-Code substitution below. Each
 substitution names the exact upstream text it replaces and fails loudly when
 that text is missing or ambiguous, so a refresh against a newer upstream
-cannot silently skip a mapping. Files the pack adds on top of upstream
-(settings, the read-only agent, setup-pstack) are written whole, and the
-regression tests for the pack's safety fixes are copied from
-added-skills/. The staged
-pack is then validated, and only a pack that passes replaces the installed
-skills, agents, and settings in the pack directory. A failed refresh leaves
-the installed pack exactly as it was.
+cannot silently skip a mapping. The poteto-mode skill is then reordered so
+compaction keeps its playbooks, and its Cursor reminder becomes two
+generated settings hooks. Files the pack adds on top of upstream (settings,
+the mode hooks, the Claude Code reference, the read-only agent,
+setup-pstack) are written whole, and the playbook loader skill and the
+regression tests for the pack's safety fixes are copied from added-skills/.
+The staged pack is then validated, and only a pack that passes replaces the
+installed skills, agents, mode hooks, and settings in the pack directory. A
+failed refresh leaves the installed pack exactly as it was.
 
 The read-only agent's search hook, hooks/pstack-readonly-search.py, is
 maintained by hand and is only checked for presence here.
@@ -27,6 +29,7 @@ a58628271271837ef5f386adca29c0812683a19a.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sys
@@ -72,17 +75,6 @@ def role_lines(subject: str, exception: str) -> str:
 SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
     "poteto-mode/SKILL.md": [
         (
-            ("name: Poteto Mode\n"
-            "description: poteto's agent style for concise, detailed responses, deliberate subagents, unslopped prose, simple code, and verified work. Use for poteto, /poteto-mode, or requests to work in this style.\n"
-            "disable-model-invocation: true\n"
-            "mode: true\n"
-            "icon: crown\n"
-            "color: yellow\n"
-            "reminder: New task? Playbook match or rigor needed -> apply /poteto-mode. Casual turn or user opts out -> don't.\n"),
-            ("name: poteto-mode\n"
-            "description: poteto's agent style for concise, detailed responses, deliberate subagents, unslopped prose, simple code, and verified work. Use for poteto, /poteto-mode, or requests to work in this style.\n"),
-        ),
-        (
             "- About to `AskQuestion` on a",
             "- About to `AskUserQuestion` on a",
         ),
@@ -110,22 +102,14 @@ SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "\n"
             "**Defaults for every `Agent` call.** Background by default (Claude Code needs no flag), `general-purpose` for read-write work and `pstack-readonly` when the skill says read-only (both keep MCP), file pointers not inlined context, explicit `model` per role (configurable via `/setup-pstack`). Defaults are `opus` for code, `opus` for prose and judgment, `fable` for the hardest tasks, and `sonnet` for explorers and swarm workers. Read-only and research spawns pass `model: sonnet`. Omitting `model` is wrong, because the call inherits the parent model. `pstack-readonly` also pins `model: sonnet` so a forgotten argument still stays off Opus. `poteto-agent` stays unpinned because it implements as well as explores. Code delegates tier by difficulty. The hardest changes (cross-cutting design, gnarly concurrency, subtle algorithms) go to your strongest judgment model (`fable`), whether the task needs judgment on vague intent or is a precisely specified sequence of steps to execute to the letter. Trivial mechanical edits go to your fast code model (`sonnet`). Per-role lines in the `/setup-pstack` rule override these defaults and the model choices in the routed skills (`how`, `why`, `arena`, `swarm`, `architect`, `interrogate`, `reflect`). A role with no line keeps its default, and a role line of `inherit-parent` or `auto` runs that role on the parent chat model (omit `model` on the `Agent` call). Each code playbook's configured model comes from its line (`feature, refactoring`, `bug-fix`, `perf-issue`, or `hillclimb`), and the hardest changes read `hardest tasks`. Prose and judgment read `judgment and prose`. Reasoning budget is the session effort level, which every subagent inherits; the rule's `# budget` line records the level `/setup-pstack` chose.\n"),
         ),
+        # port_poteto_mode() moves Playbooks above Writing the reply.
         (
-            "## Writing the reply\n",
-            ("## Claude Code environment\n"
-            "\n"
-            "This is the Claude Code port of the Cursor pstack plugin. Cursor's mechanisms map as follows.\n"
-            "\n"
-            f"- **Skills.** `.claude/skills/<name>/SKILL.md`. Every pstack skill is in your skill listing. When this mode or a playbook names a skill (**how**, `/unslop`, a `principle-*`), load it with the Skill tool, or read that file in full and apply it. The user can also type `/<name>`. Relative paths in this file (`playbooks/feature.md`, `references/bugbot-triage.md`, `scripts/`) resolve under `.claude/skills/poteto-mode/` when you read them. Shell commands run from the repository root, so the playbooks spell script paths out in full (`{POTETO_SCRIPTS}/...`).\n"
-            "- **Subagents.** The `Agent` tool with `subagent_type`. `poteto-agent`, `comment-sicko`, and `pstack-readonly` are pstack's own, in `.claude/agents/`. `general-purpose` is Claude Code's read-write agent. `pstack-readonly` is Cursor's `readonly: true`: no shell, no file writes, none of the tools that run commands, spawn or steer agents, or schedule work (`Monitor`, `Agent`, `Workflow`, `Skill`, `SendMessage`, and the task and cron tools), search through a `Read` hook that runs only `rg`, `grep`, `find`, and `ls`, MCP kept, and its frontmatter pins `model: sonnet`. An explicit `model` on the Agent call still selects the role (an explainer or a judge on `opus` or `fable`). Subagents run in the background, so Cursor's `run_in_background: true` needs no flag. `isolation: \"worktree\"` gives a subagent its own checkout in place of Cursor's `environment: \"cloud\"`, and `isolation: \"remote\"` runs it in a cloud session when the account allows it. Resume or message an existing subagent with `SendMessage`, and only in the strict cases that the Subagents section names.\n"
-            "- **Models.** The values the `Agent` tool accepts: the aliases `fable`, `opus`, `sonnet`, and `haiku`, or a full model ID. The reasoning budget is the session effort level (`/effort`), which subagents inherit. The model rule `/setup-pstack` writes is `~/.claude/rules/pstack-models.md`.\n"
-            "- **Todolist.** The task list (`TaskCreate`, `TaskUpdate`, `TaskList`). The pack's `.claude/settings.json` turns those tools on for every session in this repository. When a session lacks them, keep the checklist in your reply and update it there.\n"
-            "- **Commands.** Questions to the human use `AskUserQuestion`. `/loop` is Claude Code's own. `/simplify` is Claude Code's slop-strip, in place of `/deslop`. `/run` and `/verify`, or a project `verify-<app>` skill, drive the real app in place of `control-cli` and `control-ui`. `/tasks` shows background subagents in place of the Cursor dashboard.\n"
-            f"- **Transcripts.** {TRANSCRIPT_DIR} The current session is `$CLAUDE_CODE_SESSION_ID.jsonl` there, and its subagents are under `<session>/subagents/`. Never read another project's directory unless asked.\n"
-            "- **Store.** The pstack store is `~/.claude/pstack/store/`. Playbooks that write outside the repository (Orchestrate, Multi-phase plan) write there.\n"
-            "- **Review bots.** Bugbot, Greptile, and the agentic security review are GitHub-side and unchanged. Cursor Automations have no Claude Code equivalent.\n"
-            "\n"
-            "## Writing the reply\n"),
+            "The per-playbook lines below name only the content unique to that playbook.",
+            "The per-playbook lines above name only the content unique to that playbook.",
+        ),
+        (
+            "Open a todolist whose first items are the matched playbook's steps, copied in verbatim, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`. Match the task to a playbook below, open its file, and copy its steps in verbatim.",
+            "Match the task to a playbook below and load it with the Skill tool: `/playbook <name>`, where `<name>` is the file's basename (`/playbook feature` loads `playbooks/feature.md`). A Read of the file does not survive compaction; a Skill-tool load does. Then, before any other tool call, open the todolist: one `TaskCreate` call per playbook step, in order, with the step text copied in verbatim, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`.",
         ),
         (
             "on an explicit pause, going offline, a Cursor restart, or imminent context compaction.",
@@ -1286,13 +1270,82 @@ The budget's effort is a session setting. Tell the user to set it with `/effort 
 Check whether the project has a way to drive the real app for proof (a `verify-*` skill, `/run` and `/verify` already taught the project, or an existing harness). If not, offer once: "want a project-local verification skill, so agents can drive the app the way a user does and prove changes work? I can generate one with /create-verification-skill." On yes, invoke `/create-verification-skill` (resolves wherever pstack is installed: project or personal skills). On no, move on without pushing.
 """
 
-SETTINGS_JSON = """{
+SETTINGS_JSON = r"""{
   "env": {
     "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/poteto-mode-reminder.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/poteto-mode-compact.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
 """
 
+# poteto-mode's H2 sections in the order the port writes them. Compaction keeps only the start of a skill, so
+# Playbooks follows Non-negotiables, and Subagents goes last because the compaction hook re-supplies the last section.
+SECTION_ORDER = ("Non-negotiables", "Playbooks", "Principles", "Autonomy", "Writing the reply", "Comments", "Subagents")
+PORT_NOTE = (
+    "This is the Claude Code port. Load a named skill or playbook with the Skill tool rather than by reading its file, "
+    "because only a Skill-tool load survives compaction (`/playbook <name>` loads a playbook). "
+    "`references/claude-code.md` maps Cursor's mechanisms to Claude Code, and relative paths resolve under `.claude/skills/poteto-mode/`."
+)
+REMINDER_SUFFIX = "Apply means the Skill tool, /poteto-mode. When its text is already in context, stay in it instead of invoking it again."
+RECOVERY_NOTE = (
+    "Context was compacted. If /poteto-mode was applied in this session, do this before any other action. "
+    "1. Run TaskList and continue from the first open playbook step. "
+    "2. If the matched playbook's steps are not in context, load them again with the Skill tool: /playbook <name>. "
+    "3. The re-attached poteto-mode text is cut at a fixed length and its final section is reproduced below in full, "
+    "so use this copy of that section. "
+    f'If the re-attached text ends before its "## {SECTION_ORDER[-1]}" heading, Read .claude/skills/poteto-mode/SKILL.md '
+    "in full instead; invoking the skill again does not re-append it."
+)
+FINAL_SECTION_RULE = "--- poteto-mode, final section (reproduced because compaction cuts it) ---"
+HOOK_HEADER = "#!/bin/sh\n# Generated by claude/port/port.py; edit the generator, not this file.\n"
+# After compaction Claude Code re-attaches each skill's latest Skill-tool load, a `Base directory for this skill` header
+# plus the body, and cuts it to its first 19,900 characters and a 100-character marker once it passes 20,000.
+COMPACT_SKILL_CHARS = 20_000
+COMPACT_MARKER_CHARS = 100
+COMPACT_HEADER_ALLOWANCE = 300
+COMPACT_KEPT = COMPACT_SKILL_CHARS - COMPACT_MARKER_CHARS - COMPACT_HEADER_ALLOWANCE
+# The mode's Playbooks section has to end this early in the body, well inside what compaction keeps.
+PLAYBOOKS_END_MAX = 12_000
+
+CLAUDE_CODE_REFERENCE = f"""# Claude Code environment
+
+This is the Claude Code port of the Cursor pstack plugin. Cursor's mechanisms map as follows.
+
+- **Mode and reminder.** Cursor's sticky mode and per-turn reminder are two hooks the pack's `.claude/settings.json` installs: `UserPromptSubmit` repeats the reminder on every turn, and `SessionStart` on `compact` re-supplies the mode's final section and the recovery steps after auto-compaction. `/poteto-mode` loads the mode once, and it stays in effect for the rest of the task.
+- **Compaction.** Auto-compaction keeps the first 20,000 characters of each Skill-tool load and nothing of a file you read, so load skills and playbooks with the Skill tool (`/playbook <name>` for a playbook). The todolist survives compaction, and `TaskList` is the first call after it.
+- **Skills.** `.claude/skills/<name>/SKILL.md`. Every pstack skill is in your skill listing. When this mode or a playbook names a skill (**how**, `/unslop`, a `principle-*`), load it with the Skill tool. The user can also type `/<name>`. A `pstack-readonly` subagent has no Skill tool, so a brief that needs a skill's text names the file for it to read. Relative paths in the mode's text (`playbooks/feature.md`, `references/bugbot-triage.md`, `scripts/`) resolve under `.claude/skills/poteto-mode/`. Shell commands run from the repository root, so the playbooks spell script paths out in full (`{POTETO_SCRIPTS}/...`).
+- **Subagents.** The `Agent` tool with `subagent_type`. `poteto-agent`, `comment-sicko`, and `pstack-readonly` are pstack's own, in `.claude/agents/`. `poteto-agent` starts with this mode preloaded, so arena runners and in-playbook delegates begin inside it. `general-purpose` is Claude Code's read-write agent. `pstack-readonly` is Cursor's `readonly: true`: no shell, no file writes, none of the tools that run commands, spawn or steer agents, or schedule work (`Monitor`, `Agent`, `Workflow`, `Skill`, `SendMessage`, and the task and cron tools), search through a `Read` hook that runs only `rg`, `grep`, `find`, and `ls`, MCP kept, and its frontmatter pins `model: sonnet`. An explicit `model` on the Agent call still selects the role (an explainer or a judge on `opus` or `fable`). Subagents run in the background, so Cursor's `run_in_background: true` needs no flag. `isolation: "worktree"` gives a subagent its own checkout in place of Cursor's `environment: "cloud"`, and `isolation: "remote"` runs it in a cloud session when the account allows it. Resume or message an existing subagent with `SendMessage`, and only in the strict cases that the Subagents section names.
+- **Models.** The values the `Agent` tool accepts: the aliases `fable`, `opus`, `sonnet`, and `haiku`, or a full model ID. The reasoning budget is the effort level `/setup-pstack` writes into the project's `.claude/settings.local.json`; it applies to every model, and every pack subagent inherits it because none pins `effort`. An explicit `--effort`, `/effort`, or `CLAUDE_CODE_EFFORT_LEVEL` wins for that session. The model rule `/setup-pstack` writes is `~/.claude/rules/pstack-models.md`.
+- **Todolist.** The task list (`TaskCreate`, `TaskUpdate`, `TaskList`). The pack's `.claude/settings.json` turns those tools on for every session in this repository. If they are missing, the settings were not merged; fix that rather than keeping the list in the reply.
+- **Commands.** Questions to the human use `AskUserQuestion`. `/loop` is Claude Code's own. `/simplify` is Claude Code's slop-strip, in place of `/deslop`. `/run` and `/verify`, or a project `verify-<app>` skill, drive the real app in place of `control-cli` and `control-ui`. `/tasks` shows background subagents in place of the Cursor dashboard.
+- **Transcripts.** {TRANSCRIPT_DIR} The current session is `$CLAUDE_CODE_SESSION_ID.jsonl` there, and its subagents are under `<session>/subagents/`. Never read another project's directory unless asked.
+- **Store.** The pstack store is `~/.claude/pstack/store/`. Playbooks that write outside the repository (Orchestrate, Multi-phase plan) write there.
+- **Review bots.** Bugbot, Greptile, and the agentic security review are GitHub-side and unchanged. Cursor Automations have no Claude Code equivalent.
+"""
 
 # Text a finished port must not contain: Cursor paths, tools, and model slugs, a forced worktree removal, and the em dash this repo bans.
 LEFTOVERS = (
@@ -1335,6 +1388,57 @@ def apply(path: Path, pairs: list[tuple[str, str]], name: str) -> int:
     return len(pairs)
 
 
+def skill_body(text: str) -> str:
+    """The text after a skill's frontmatter."""
+    return text[text.find("\n---\n", 3) + 5:]
+
+
+def split_sections(body: str) -> tuple[str, list[str]]:
+    """Split a skill body into the text before its first H2 heading and its H2 sections, each up to the next heading."""
+    intro, *sections = re.split(r"^(?=## )", body, flags=re.MULTILINE)
+    return intro, sections
+
+
+def heading(section: str) -> str:
+    return section.partition("\n")[0][3:].strip()
+
+
+def port_poteto_mode(path: Path) -> str:
+    """Rewrite the mode so compaction keeps its playbooks, and return the upstream reminder for the mode hooks."""
+    rel = "skills/poteto-mode/SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    keys = frontmatter(text) or {}
+    for key in ("description", "reminder"):
+        if not keys.get(key):
+            raise SystemExit(f"{rel}: upstream frontmatter lost {key}")
+    intro, sections = split_sections(skill_body(text))
+    names = [heading(section) for section in sections]
+    missing = [name for name in SECTION_ORDER if name not in names]
+    unexpected = [name for i, name in enumerate(names) if name not in SECTION_ORDER or name in names[:i]]
+    if missing or unexpected:
+        raise SystemExit(
+            f"{rel}: upstream H2 sections changed (missing {missing}, unexpected {unexpected}); "
+            "update SECTION_ORDER in port.py so every section has its place"
+        )
+    top, title, rest = intro.partition("# Poteto mode\n")
+    if not title:
+        raise SystemExit(f"{rel}: upstream lost the # Poteto mode heading that the port note follows")
+    rest = rest.lstrip("\n")
+    by_name = dict(zip(names, sections))
+    ordered = "\n\n".join(by_name[name].rstrip("\n") for name in SECTION_ORDER)
+    path.write_text(
+        f"---\nname: poteto-mode\ndescription: {keys['description']}\n---\n{top}{title}\n{PORT_NOTE}\n\n{rest}{ordered}\n",
+        encoding="utf-8",
+    )
+    return keys["reminder"]
+
+
+def hook_script(event: str, context: str) -> str:
+    """A POSIX sh hook that hands `context` to the model as the event's additional context."""
+    output = json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}})
+    return f"{HOOK_HEADER}cat <<'EOF'\n{output}\nEOF\n"
+
+
 def build(upstream: Path, pack: Path) -> int:
     """Write the complete ported pack under `pack` and return the number of substitutions applied."""
     skills = pack / "skills"
@@ -1347,6 +1451,8 @@ def build(upstream: Path, pack: Path) -> int:
     applied = 0
     for rel, pairs in {**SUBSTITUTIONS, **SCRIPT_SUBSTITUTIONS}.items():
         applied += apply(skills / rel, pairs, f"skills/{rel}")
+    mode = skills / "poteto-mode" / "SKILL.md"
+    reminder = port_poteto_mode(mode)
     for md in skills.glob("*/SKILL.md"):
         text = md.read_text(encoding="utf-8")
         end = text.find("\n---\n", 3) + 1
@@ -1359,7 +1465,22 @@ def build(upstream: Path, pack: Path) -> int:
             dest = skills / src.relative_to(ADDED_SKILL_FILES)
             if dest.exists():
                 raise SystemExit(f"{dest}: upstream now ships this file; port it with a substitution instead")
+            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
+    (mode.parent / "references").mkdir(exist_ok=True)
+    (mode.parent / "references" / "claude-code.md").write_text(CLAUDE_CODE_REFERENCE, encoding="utf-8")
+    _, sections = split_sections(skill_body(mode.read_text(encoding="utf-8")))
+    final_section = sections[-1].rstrip("\n")
+    mode_hooks = {
+        "poteto-mode-reminder.sh": hook_script("UserPromptSubmit", f"{reminder} {REMINDER_SUFFIX}"),
+        "poteto-mode-compact.sh": hook_script(
+            "SessionStart", f"{RECOVERY_NOTE}\n\n{FINAL_SECTION_RULE}\n\n{final_section}\n\n{reminder}"
+        ),
+    }
+    (pack / "hooks").mkdir()
+    for name, script in mode_hooks.items():
+        (pack / "hooks" / name).write_text(script, encoding="utf-8")
+        (pack / "hooks" / name).chmod(0o755)
     (skills / "setup-pstack").mkdir(exist_ok=True)
     (skills / "setup-pstack" / "SKILL.md").write_text(SETUP_PSTACK, encoding="utf-8")
     (pack / "settings.json").write_text(SETTINGS_JSON, encoding="utf-8")
@@ -1378,6 +1499,31 @@ def frontmatter(text: str) -> dict[str, str] | None:
         if match:
             keys[match.group(1)] = match.group(2).strip()
     return keys
+
+
+def mode_layout_problems(mode: Path) -> list[str]:
+    """Check that compaction keeps the mode's Playbooks section and cuts the mode no earlier than its last section."""
+    rel = "skills/poteto-mode/SKILL.md"
+    intro, sections = split_sections(skill_body(mode.read_text(encoding="utf-8")))
+    names = [heading(section) for section in sections]
+    if tuple(names) != SECTION_ORDER:
+        return [f"{rel}: H2 sections are {names}, not {list(SECTION_ORDER)}"]
+    spans, start = {}, len(intro)
+    for name, section in zip(names, sections):
+        spans[name] = (start, start + len(section))
+        start += len(section)
+    problems = []
+    if spans["Playbooks"][1] > PLAYBOOKS_END_MAX:
+        problems.append(
+            f"{rel}: the Playbooks section ends at body offset {spans['Playbooks'][1]}, past {PLAYBOOKS_END_MAX}, "
+            "so compaction could cut the playbooks"
+        )
+    if spans[names[-1]][0] > COMPACT_KEPT:
+        problems.append(
+            f"{rel}: the last section, {names[-1]}, starts at body offset {spans[names[-1]][0]}, past {COMPACT_KEPT}, "
+            "so compaction cuts text before it that the compaction hook does not re-supply"
+        )
+    return problems
 
 
 def validate(pack: Path, target: Path) -> None:
@@ -1402,6 +1548,7 @@ def validate(pack: Path, target: Path) -> None:
         problems += [f"{rel}: leftover {token!r}" for token in LEFTOVERS if token in text]
         if match := RELATIVE_SCRIPT.search(text):
             problems.append(f"{rel}: script path relative to the skill directory: {match.group(0)}")
+    problems += mode_layout_problems(pack / "skills" / "poteto-mode" / "SKILL.md")
     if not (target / SEARCH_HOOK).is_file():
         problems.append(f"{SEARCH_HOOK} is missing, and the pstack-readonly agent searches through it")
     if problems:
@@ -1411,7 +1558,7 @@ def validate(pack: Path, target: Path) -> None:
 def install(pack: Path, target: Path, replaced: Path) -> None:
     """Move every staged entry into `target`, restoring the replaced entries if any step fails."""
     entries = [Path("settings.json")]
-    entries += [Path(kind) / entry.name for kind in ("skills", "agents") for entry in sorted((pack / kind).iterdir())]
+    entries += [Path(kind) / entry.name for kind in ("skills", "agents", "hooks") for entry in sorted((pack / kind).iterdir())]
     started: list[Path] = []
     try:
         for rel in entries:

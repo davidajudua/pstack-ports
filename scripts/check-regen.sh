@@ -12,8 +12,9 @@ trap 'rm -rf "$scratch"' EXIT
 case "$port" in
   claude)
     # The read-only search hook is hand-maintained, so the port only checks that it is present.
-    mkdir -p "$scratch/pack"
-    cp -R "$root/claude/pack/hooks" "$scratch/pack/hooks"
+    # The mode hooks beside it are generated, so the scratch pack starts with the search hook alone.
+    mkdir -p "$scratch/pack/hooks"
+    cp "$root/claude/pack/hooks/pstack-readonly-search.py" "$scratch/pack/hooks/"
     python3 "$root/claude/port/port.py" "$upstream" "$scratch/pack"
     ;;
   grok)
