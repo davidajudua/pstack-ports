@@ -47,6 +47,8 @@ PLAYBOOK_HEADER = (
     "Relative paths below resolve under .claude/skills/poteto-mode/.\n\n"
 )
 PLAYBOOK_USAGE = "Usage: /playbook <name>. Available playbooks: feature, opening-a-pr\n"
+# The first sentence of a principle's description says when to apply it, and is all the port keeps.
+PRINCIPLE_TRIGGER = "Apply when a foo needs care."
 
 
 def write(path: Path, text: str) -> None:
@@ -56,6 +58,16 @@ def write(path: Path, text: str) -> None:
 
 def snapshot(root: Path) -> dict[str, bytes]:
     return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def principle(name: str, description: str) -> str:
+    """A principle SKILL.md whose frontmatter description is `description`, quotes included."""
+    return f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n\nCheck each step.\n"
+
+
+def first_sentence(length: int) -> str:
+    """A first sentence of exactly `length` characters."""
+    return "Apply when " + "x" * (length - 12) + "."
 
 
 def poteto_mode(sections: dict[str, str], reminder: bool = True) -> str:
@@ -78,6 +90,8 @@ class PortTest(unittest.TestCase):
         write(self.mode, poteto_mode(MODE_SECTIONS))
         write(self.upstream / "skills" / "poteto-mode" / "playbooks" / "feature.md", FEATURE)
         write(self.upstream / "skills" / "poteto-mode" / "playbooks" / "opening-a-pr.md", OPENING_A_PR)
+        self.principle = self.upstream / "skills" / "principle-foo" / "SKILL.md"
+        write(self.principle, principle("principle-foo", f'"{PRINCIPLE_TRIGGER} Foo work drifts without it."'))
         write(
             self.upstream / "agents" / "comment-sicko.md",
             port.COMMENT_SICKO_FRONTMATTER[0] + "\n" + port.COMMENT_SICKO_HOWWHY[0] + "\n",
@@ -285,6 +299,42 @@ class PortTest(unittest.TestCase):
         self.assertIn('"CLAUDE_CODE_EFFORT_LEVEL": "max"', port.SETUP_PSTACK)
         self.assertNotIn("~/.claude/settings.json", port.SETUP_PSTACK)
 
+    def test_principle_description_is_cut_to_its_first_sentence(self) -> None:
+        installed = self.pack / "skills" / "principle-foo" / "SKILL.md"
+        self.run_port()
+        self.assertEqual(installed.read_text(encoding="utf-8"), principle("principle-foo", f'"{PRINCIPLE_TRIGGER}"'))
+        for upstream, cut in (
+            ('"Apply when node.js code needs care. Then check it."', '"Apply when node.js code needs care."'),
+            ('"Apply when a foo needs care! Then check it."', '"Apply when a foo needs care!"'),
+            ("Does a foo need care? Apply this.", "Does a foo need care?"),
+            (f'"{first_sentence(20)} Then check it."', f'"{first_sentence(20)}"'),
+            (f'"{first_sentence(160)} Then check it."', f'"{first_sentence(160)}"'),
+        ):
+            with self.subTest(upstream):
+                write(self.principle, principle("principle-foo", upstream))
+                self.run_port()
+                self.assertEqual(installed.read_text(encoding="utf-8"), principle("principle-foo", cut))
+
+    def test_principle_description_that_cannot_stand_alone_is_refused(self) -> None:
+        for description, problem in (
+            (f'"{first_sentence(161)} Then check it."', "the description's first sentence is 161 characters"),
+            (f'"{first_sentence(19)} Then check it."', "the description's first sentence is 19 characters"),
+            ('"Apply when the bar is raised and then"', "the description has no sentence end"),
+        ):
+            with self.subTest(problem):
+                write(self.upstream / "skills" / "principle-bar" / "SKILL.md", principle("principle-bar", description))
+                self.assertIn(f"skills/principle-bar/SKILL.md: {problem}", self.assertRefusedUntouched())
+
+    def test_validate_refuses_a_principle_description_past_the_listing_bound(self) -> None:
+        self.run_port()
+        installed = self.pack / "skills" / "principle-foo" / "SKILL.md"
+        write(installed, principle("principle-foo", f'"{first_sentence(160)}"'))
+        port.validate(self.pack, self.pack)
+        write(installed, principle("principle-foo", f'"{first_sentence(161)}"'))
+        with self.assertRaises(SystemExit) as refused:
+            port.validate(self.pack, self.pack)
+        self.assertIn("skills/principle-foo: description is 161 characters, over 160", str(refused.exception))
+
     def test_claude_code_reference_is_installed(self) -> None:
         self.run_port()
         reference = (self.pack / "skills" / "poteto-mode" / "references" / "claude-code.md").read_text(encoding="utf-8")
@@ -304,6 +354,9 @@ class PortTest(unittest.TestCase):
         self.assertIn("background", keys)
         self.assertNotIn("is_background", keys)
         self.assertEqual((self.pack / "settings.json").read_text(), port.SETTINGS_JSON)
+        settings = json.loads((self.pack / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(settings), ["env", "skillListingBudgetFraction", "hooks"])
+        self.assertEqual(settings["skillListingBudgetFraction"], 0.02)
         self.assertEqual((self.pack / "settings.local.json").read_text(), '{"local": true}\n')
         self.assertEqual(
             sorted(p.name for p in (self.pack / "hooks").iterdir()),

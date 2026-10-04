@@ -2,6 +2,7 @@
   "env": {
     "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
   },
+  "skillListingBudgetFraction": 0.02,
   "hooks": {
     "UserPromptSubmit": [
       {

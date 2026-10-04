@@ -38,7 +38,7 @@ The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`,
 | `pack/skills/` | 51 skills: the 50 upstream skills, with `setup-pstack` rewritten for Claude Code, plus `playbook`, the `/playbook <name>` loader. `poteto-mode/` holds the mode, its 23 playbooks, references, and scripts. |
 | `pack/agents/` | `poteto-agent` and `comment-sicko` from upstream, plus `pstack-readonly`, the Claude Code form of Cursor's `readonly: true` subagent. |
 | `pack/hooks/` | `pstack-readonly-search.py`, the `Read` hook `pstack-readonly` searches through, which is maintained by hand. `poteto-mode-reminder.sh` and `poteto-mode-compact.sh`, the two mode hooks, which are generated. |
-| `pack/settings.json` | The todo-tools environment variable and the two mode hooks. |
+| `pack/settings.json` | The todo-tools environment variable, the skill listing budget, and the two mode hooks. |
 | `port/port.py` | The generator. |
 | `port/added-skills/` | Whole files the pack adds under `skills/`: the `playbook` skill and the regression tests for the safety fixes. |
 | `port/tests/` | Tests for the generator, the search hook, and the worktree audit. |
@@ -66,6 +66,7 @@ The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`,
 Skill frontmatter keeps only Claude Code keys.
 `disable-model-invocation: true` is dropped from every skill, so agents can load `poteto-mode` and its leaf skills through the Skill tool.
 Upstream em dashes are rewritten.
+Principle descriptions are cut to their first sentence for the skill listing, and the pack raises `skillListingBudgetFraction` to `0.02` in `settings.json`.
 
 ## Mode persistence
 

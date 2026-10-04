@@ -12,13 +12,15 @@ substitution names the exact upstream text it replaces and fails loudly when
 that text is missing or ambiguous, so a refresh against a newer upstream
 cannot silently skip a mapping. The poteto-mode skill is then reordered so
 compaction keeps its playbooks, and its Cursor reminder becomes two
-generated settings hooks. Files the pack adds on top of upstream (settings,
-the mode hooks, the Claude Code reference, the read-only agent,
-setup-pstack) are written whole, and the playbook loader skill and the
-regression tests for the pack's safety fixes are copied from added-skills/.
-The staged pack is then validated, and only a pack that passes replaces the
-installed skills, agents, mode hooks, and settings in the pack directory. A
-failed refresh leaves the installed pack exactly as it was.
+generated settings hooks. Each principle skill's description is cut to its
+first sentence, so the skill listing has room for every skill. Files the
+pack adds on top of upstream (settings, the mode hooks, the Claude Code
+reference, the read-only agent, setup-pstack) are written whole, and the
+playbook loader skill and the regression tests for the pack's safety fixes
+are copied from added-skills/. The staged pack is then validated, and only
+a pack that passes replaces the installed skills, agents, mode hooks, and
+settings in the pack directory. A failed refresh leaves the installed pack
+exactly as it was.
 
 The read-only agent's search hook, hooks/pstack-readonly-search.py, is
 maintained by hand and is only checked for presence here.
@@ -1267,7 +1269,14 @@ interrogate reviewers: fable, opus, sonnet
 
 Write the budget into the project's `.claude/settings.local.json`, creating the file when it is missing and keeping every other key. For `xhigh`, `high`, and `medium`, merge `"effortLevel": "<level>"` at the top level and remove any `CLAUDE_CODE_EFFORT_LEVEL` entry from its `env` object. For `max`, merge `"CLAUDE_CODE_EFFORT_LEVEL": "max"` into the `env` object and remove any top-level `effortLevel`, because Claude Code keeps `max` only for the current session unless the environment variable sets it. A project-level setting applies to every model, Opus 5.5 included, and to every subagent, and it loads in each new session for this project; `/effort` still changes the current session, and an organization cap still applies. Tell the user the rule and the setting were written and take effect in new sessions. Re-running this skill updates both.
 
-### 7. Offer a verification skill (optional)
+### 7. Check the skill listing
+
+Claude Code's skill listing shows each skill's `description` and `when_to_use` text, and its budget is 1% of the context window by default, about 8,000 characters at 200k.
+The pack's `.claude/settings.json` sets `skillListingBudgetFraction` to `0.02`, about 16,000 characters.
+Measure the project's skills with `cat .claude/skills/*/SKILL.md | grep -E '^(description|when_to_use):' | wc -c`, run the same command over `~/.claude/skills/*/SKILL.md` for the personal ones, and compare the sum of the two counts with the budget.
+When the sum exceeds the budget, tell the user, point at the personal copies in `~/.claude/skills/` that duplicate pack skills (a personal skill shadows the project skill with the same name), and offer `SLASH_COMMAND_TOOL_CHAR_BUDGET` for a larger fixed budget.
+
+### 8. Offer a verification skill (optional)
 
 Check whether the project has a way to drive the real app for proof (a `verify-*` skill, `/run` and `/verify` already taught the project, or an existing harness). If not, offer once: "want a project-local verification skill, so agents can drive the app the way a user does and prove changes work? I can generate one with /create-verification-skill." On yes, invoke `/create-verification-skill` (resolves wherever pstack is installed: project or personal skills). On no, move on without pushing.
 """
@@ -1276,6 +1285,7 @@ SETTINGS_JSON = r"""{
   "env": {
     "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
   },
+  "skillListingBudgetFraction": 0.02,
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -1373,6 +1383,12 @@ DISABLE_MODEL_INVOCATION = re.compile(r"^disable-model-invocation:.*\n", re.MULT
 # A backticked command that starts at a skill's scripts/ directory breaks when run from the repository root.
 RELATIVE_SCRIPT = re.compile(r"`(?:bun |node )?scripts/[^`\s]")
 SEARCH_HOOK = Path("hooks") / "pstack-readonly-search.py"
+# The skill listing shows every skill's description, so each principle keeps only its first sentence, which says
+# when to apply it. A first sentence outside these bounds cannot stand alone as the description.
+PRINCIPLE_SENTENCE_MIN = 20
+PRINCIPLE_DESCRIPTION_MAX = 160
+DESCRIPTION_VALUE = re.compile(r"^description:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+SENTENCE_END = re.compile(r"[.!?](?=\s)")
 
 
 class RollbackFailed(Exception):
@@ -1441,6 +1457,33 @@ def hook_script(event: str, context: str) -> str:
     return f"{HOOK_HEADER}cat <<'EOF'\n{output}\nEOF\n"
 
 
+def unquote(value: str) -> tuple[str, str]:
+    """Split a frontmatter value into its surrounding double quote, if it has one, and the text inside."""
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return '"', value[1:-1]
+    return "", value
+
+
+def cut_principle_description(md: Path) -> None:
+    """Cut a principle skill's description to its first sentence, quoted the way upstream quotes it."""
+    rel = f"skills/{md.parent.name}/SKILL.md"
+    text = md.read_text(encoding="utf-8")
+    match = DESCRIPTION_VALUE.search(text, 0, text.find("\n---\n", 3) + 1)
+    if not match:
+        raise SystemExit(f"{rel}: no description to cut to its first sentence")
+    quote, value = unquote(match.group(1))
+    end = SENTENCE_END.search(value)
+    if not end:
+        raise SystemExit(f"{rel}: the description has no sentence end to cut it at")
+    sentence = value[: end.end()]
+    if not PRINCIPLE_SENTENCE_MIN <= len(sentence) <= PRINCIPLE_DESCRIPTION_MAX:
+        raise SystemExit(
+            f"{rel}: the description's first sentence is {len(sentence)} characters, outside "
+            f"{PRINCIPLE_SENTENCE_MIN} to {PRINCIPLE_DESCRIPTION_MAX}, so it cannot stand alone as the description"
+        )
+    md.write_text(f"{text[:match.start(1)]}{quote}{sentence}{quote}{text[match.end(1):]}", encoding="utf-8")
+
+
 def build(upstream: Path, pack: Path) -> int:
     """Write the complete ported pack under `pack` and return the number of substitutions applied."""
     skills = pack / "skills"
@@ -1459,6 +1502,8 @@ def build(upstream: Path, pack: Path) -> int:
         text = md.read_text(encoding="utf-8")
         end = text.find("\n---\n", 3) + 1
         md.write_text(DISABLE_MODEL_INVOCATION.sub("", text[:end]) + text[end:], encoding="utf-8")
+    for md in sorted(skills.glob("principle-*/SKILL.md")):
+        cut_principle_description(md)
     applied += apply(agents / "comment-sicko.md", [COMMENT_SICKO_FRONTMATTER, COMMENT_SICKO_HOWWHY], "agents/comment-sicko.md")
     for name, body in AGENTS.items():
         (agents / name).write_text(body, encoding="utf-8")
@@ -1541,6 +1586,12 @@ def validate(pack: Path, target: Path) -> None:
                 problems.append(f"{kind}/{name}: frontmatter needs name: {name} and a description")
             elif forbidden & keys.keys():
                 problems.append(f"{kind}/{name}: keys the port drops {sorted(forbidden & keys.keys())}")
+    for md in sorted((pack / "skills").glob("principle-*/SKILL.md")):
+        _, description = unquote((frontmatter(md.read_text(encoding="utf-8")) or {}).get("description", ""))
+        if len(description) > PRINCIPLE_DESCRIPTION_MAX:
+            problems.append(
+                f"skills/{md.parent.name}: description is {len(description)} characters, over {PRINCIPLE_DESCRIPTION_MAX}"
+            )
     for skill in sorted((pack / "skills").iterdir()):
         if not (skill / "SKILL.md").is_file():
             problems.append(f"skills/{skill.name}: no SKILL.md")

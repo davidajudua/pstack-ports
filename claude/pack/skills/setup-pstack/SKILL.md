@@ -65,6 +65,13 @@ interrogate reviewers: fable, opus, sonnet
 
 Write the budget into the project's `.claude/settings.local.json`, creating the file when it is missing and keeping every other key. For `xhigh`, `high`, and `medium`, merge `"effortLevel": "<level>"` at the top level and remove any `CLAUDE_CODE_EFFORT_LEVEL` entry from its `env` object. For `max`, merge `"CLAUDE_CODE_EFFORT_LEVEL": "max"` into the `env` object and remove any top-level `effortLevel`, because Claude Code keeps `max` only for the current session unless the environment variable sets it. A project-level setting applies to every model, Opus 5.5 included, and to every subagent, and it loads in each new session for this project; `/effort` still changes the current session, and an organization cap still applies. Tell the user the rule and the setting were written and take effect in new sessions. Re-running this skill updates both.
 
-### 7. Offer a verification skill (optional)
+### 7. Check the skill listing
+
+Claude Code's skill listing shows each skill's `description` and `when_to_use` text, and its budget is 1% of the context window by default, about 8,000 characters at 200k.
+The pack's `.claude/settings.json` sets `skillListingBudgetFraction` to `0.02`, about 16,000 characters.
+Measure the project's skills with `cat .claude/skills/*/SKILL.md | grep -E '^(description|when_to_use):' | wc -c`, run the same command over `~/.claude/skills/*/SKILL.md` for the personal ones, and compare the sum of the two counts with the budget.
+When the sum exceeds the budget, tell the user, point at the personal copies in `~/.claude/skills/` that duplicate pack skills (a personal skill shadows the project skill with the same name), and offer `SLASH_COMMAND_TOOL_CHAR_BUDGET` for a larger fixed budget.
+
+### 8. Offer a verification skill (optional)
 
 Check whether the project has a way to drive the real app for proof (a `verify-*` skill, `/run` and `/verify` already taught the project, or an existing harness). If not, offer once: "want a project-local verification skill, so agents can drive the app the way a user does and prove changes work? I can generate one with /create-verification-skill." On yes, invoke `/create-verification-skill` (resolves wherever pstack is installed: project or personal skills). On no, move on without pushing.
