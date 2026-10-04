@@ -15,9 +15,11 @@ compaction keeps its playbooks, and its Cursor reminder becomes two
 generated settings hooks. Each principle skill's description is cut to its
 first sentence, so the skill listing has room for every skill. Files the
 pack adds on top of upstream (settings, the mode hooks, the Claude Code
-reference, the read-only agent, setup-pstack) are written whole, and the
-playbook loader skill and the regression tests for the pack's safety fixes
-are copied from added-skills/. The staged pack is then validated, and only
+reference, the read-only agent, setup-pstack) are written whole, each
+playbook is also written as a static playbook-<name> skill so that a
+Skill-tool load carries its steps across compaction, and the regression
+tests for the pack's safety fixes are copied from added-skills/. The
+staged pack is then validated, and only
 a pack that passes replaces the installed skills, agents, mode hooks, and
 settings in the pack directory. A failed refresh leaves the installed pack
 exactly as it was.
@@ -111,7 +113,7 @@ SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Open a todolist whose first items are the matched playbook's steps, copied in verbatim, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`. Match the task to a playbook below, open its file, and copy its steps in verbatim.",
-            "Match the task to a playbook below and load it with the Skill tool: `/playbook <name>`, where `<name>` is the file's basename (`/playbook feature` loads `playbooks/feature.md`). A Read of the file does not survive compaction; a Skill-tool load does. Then, before any other tool call, open the todolist: one `TaskCreate` call per playbook step, in order, with the step text copied in verbatim, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`.",
+            "Match the task to a playbook below and load it with the Skill tool as `playbook-<name>`, where `<name>` is the file's basename (`/playbook-feature` loads `playbooks/feature.md`). A Read of the file does not survive compaction; a Skill-tool load does. Then, before any other tool call, open the todolist: one `TaskCreate` call per playbook step, in order, with the step text copied in verbatim, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`.",
         ),
         (
             "on an explicit pause, going offline, a Cursor restart, or imminent context compaction.",
@@ -1162,7 +1164,7 @@ background: true
 
 # Poteto subagent
 
-You are operating as poteto-mode's full agent style. The `poteto-mode` skill is preloaded above. Follow it in full, including its inline Principles index, before doing any work. Load a leaf `principle-*` skill with the Skill tool whenever you apply that principle, and load a playbook with `/playbook <name>`.
+You are operating as poteto-mode's full agent style. The `poteto-mode` skill is preloaded above. Follow it in full, including its inline Principles index, before doing any work. Load a leaf `principle-*` skill with the Skill tool whenever you apply that principle, and load a playbook with `/playbook-<name>`.
 """,
     "pstack-readonly.md": """---
 name: pstack-readonly
@@ -1319,14 +1321,14 @@ SETTINGS_JSON = r"""{
 SECTION_ORDER = ("Non-negotiables", "Playbooks", "Principles", "Autonomy", "Writing the reply", "Comments", "Subagents")
 PORT_NOTE = (
     "This is the Claude Code port. Load a named skill or playbook with the Skill tool rather than by reading its file, "
-    "because only a Skill-tool load survives compaction (`/playbook <name>` loads a playbook). "
+    "because only a Skill-tool load survives compaction (`/playbook-<name>` loads `playbooks/<name>.md`). "
     "`references/claude-code.md` maps Cursor's mechanisms to Claude Code, and relative paths resolve under `.claude/skills/poteto-mode/`."
 )
 REMINDER_SUFFIX = "Apply means the Skill tool, /poteto-mode. When its text is already in context, stay in it instead of invoking it again."
 RECOVERY_NOTE = (
     "Context was compacted. If /poteto-mode was applied in this session, do this before any other action. "
     "1. Run TaskList and continue from the first open playbook step. "
-    "2. If the matched playbook's steps are not in context, load them again with the Skill tool: /playbook <name>. "
+    "2. If the matched playbook's steps are not in context, load them again with the Skill tool: /playbook-<name>. "
     "3. The re-attached poteto-mode text is cut at a fixed length and its final section is reproduced below in full, "
     "so use this copy of that section. "
     f'If the re-attached text ends before its "## {SECTION_ORDER[-1]}" heading, Read .claude/skills/poteto-mode/SKILL.md '
@@ -1345,13 +1347,31 @@ COMPACT_HEADER_ALLOWANCE = 300
 COMPACT_KEPT = COMPACT_SKILL_CHARS - COMPACT_MARKER_CHARS - COMPACT_HEADER_ALLOWANCE
 # The mode's Playbooks section has to end this early in the body, well inside what compaction keeps.
 PLAYBOOKS_END_MAX = 12_000
+# Each playbook is also a skill, because compaction re-attaches a Skill-tool load and nothing of a file that was read.
+# The skill carries the playbook's text itself. Claude Code runs a skill's !`command` while the skill loads, with the
+# arguments pasted in as typed and no permission prompt, so a loader that handed the playbook name to a shell ran
+# whatever an apostrophe in the name let in, and no quoting could close that.
+PLAYBOOK_SKILL_PREFIX = "playbook-"
+PLAYBOOK_TITLE = re.compile(r"^### (.+)\n")
+PLAYBOOK_SKILL = """---
+name: {prefix}{name}
+description: {description}
+---
+
+The {title} playbook, from .claude/skills/poteto-mode/playbooks/{name}.md. Relative paths below resolve under .claude/skills/poteto-mode/.
+
+{text}"""
+PLAYBOOK_DESCRIPTION = "The {title} playbook of poteto-mode, loaded through the Skill tool so its steps survive compaction."
+# A shell command Claude Code runs while a skill loads: !`...` at a line start or after whitespace, or a fenced block
+# opened with ```!. A `!` after any other character, as in a table cell quoting the operator, stays text.
+SHELL_COMMAND = re.compile(r"(?:^|(?<=\s))!`|^```!", re.MULTILINE)
 
 CLAUDE_CODE_REFERENCE = f"""# Claude Code environment
 
 This is the Claude Code port of the Cursor pstack plugin. Cursor's mechanisms map as follows.
 
 - **Mode and reminder.** Cursor's sticky mode and per-turn reminder are two hooks the pack's `.claude/settings.json` installs: `UserPromptSubmit` repeats the reminder on every turn, and `SessionStart` on `compact` re-supplies the mode's final section and the recovery steps after auto-compaction. `/poteto-mode` loads the mode once, and it stays in effect for the rest of the task.
-- **Compaction.** Auto-compaction keeps the first 20,000 characters of each Skill-tool load and nothing of a file you read, so load skills and playbooks with the Skill tool (`/playbook <name>` for a playbook). The todolist survives compaction, and `TaskList` is the first call after it.
+- **Compaction.** Auto-compaction keeps the first 20,000 characters of each Skill-tool load and nothing of a file you read, so load skills and playbooks with the Skill tool (`/playbook-<name>` for a playbook). The todolist survives compaction, and `TaskList` is the first call after it.
 - **Skills.** `.claude/skills/<name>/SKILL.md`. Every pstack skill is in your skill listing. When this mode or a playbook names a skill (**how**, `/unslop`, a `principle-*`), load it with the Skill tool. The user can also type `/<name>`. A `pstack-readonly` subagent has no Skill tool, so a brief that needs a skill's text names the file for it to read. Relative paths in the mode's text (`playbooks/feature.md`, `references/bugbot-triage.md`, `scripts/`) resolve under `.claude/skills/poteto-mode/`. Shell commands run from the repository root, so the playbooks spell script paths out in full (`{POTETO_SCRIPTS}/...`).
 - **Subagents.** The `Agent` tool with `subagent_type`. `poteto-agent`, `comment-sicko`, and `pstack-readonly` are pstack's own, in `.claude/agents/`. `poteto-agent` starts with this mode preloaded, so arena runners and in-playbook delegates begin inside it. `general-purpose` is Claude Code's read-write agent. `pstack-readonly` is Cursor's `readonly: true`: no shell, no file writes, none of the tools that run commands, spawn or steer agents, or schedule work (`Monitor`, `Agent`, `Workflow`, `Skill`, `SendMessage`, and the task and cron tools), search through a `Read` hook that runs only `rg`, `grep`, `find`, and `ls`, MCP kept, and its frontmatter pins `model: sonnet`. An explicit `model` on the Agent call still selects the role (an explainer or a judge on `opus` or `fable`). Subagents run in the background, so Cursor's `run_in_background: true` needs no flag. `isolation: "worktree"` gives a subagent its own checkout in place of Cursor's `environment: "cloud"`, and `isolation: "remote"` runs it in a cloud session when the account allows it. Resume or message an existing subagent with `SendMessage`, and only in the strict cases that the Subagents section names.
 - **Models.** The values the `Agent` tool accepts: the aliases `fable`, `opus`, `sonnet`, and `haiku`, or a full model ID. The reasoning budget is the effort level `/setup-pstack` writes into the project's `.claude/settings.local.json`; it applies to every model, and every pack subagent inherits it because none pins `effort`. An explicit `--effort`, `/effort`, or `CLAUDE_CODE_EFFORT_LEVEL` wins for that session. The model rule `/setup-pstack` writes is `~/.claude/rules/pstack-models.md`.
@@ -1492,6 +1512,27 @@ def cut_principle_description(md: Path) -> None:
     md.write_text(f"{text[:match.start(1)]}{quote}{sentence}{quote}{text[match.end(1):]}", encoding="utf-8")
 
 
+def playbook_skills(mode: Path, skills: Path) -> None:
+    """Write each playbook as a static skill, so a Skill-tool load carries its steps across compaction."""
+    for md in sorted((mode.parent / "playbooks").glob("*.md")):
+        rel = f"skills/poteto-mode/playbooks/{md.name}"
+        text = md.read_text(encoding="utf-8")
+        title = PLAYBOOK_TITLE.match(text)
+        if not title:
+            raise SystemExit(f"{rel}: no ### title on the first line to describe the {PLAYBOOK_SKILL_PREFIX}{md.stem} skill")
+        skill = skills / f"{PLAYBOOK_SKILL_PREFIX}{md.stem}"
+        if skill.exists():
+            raise SystemExit(f"skills/{skill.name}: upstream now ships a skill of this name, so the playbook cannot become it")
+        skill.mkdir()
+        description = json.dumps(PLAYBOOK_DESCRIPTION.format(title=title.group(1).strip()))
+        (skill / "SKILL.md").write_text(
+            PLAYBOOK_SKILL.format(
+                prefix=PLAYBOOK_SKILL_PREFIX, name=md.stem, title=title.group(1).strip(), description=description, text=text
+            ),
+            encoding="utf-8",
+        )
+
+
 def build(upstream: Path, pack: Path) -> int:
     """Write the complete ported pack under `pack` and return the number of substitutions applied."""
     skills = pack / "skills"
@@ -1512,6 +1553,7 @@ def build(upstream: Path, pack: Path) -> int:
         md.write_text(DISABLE_MODEL_INVOCATION.sub("", text[:end]) + text[end:], encoding="utf-8")
     for md in sorted(skills.glob("principle-*/SKILL.md")):
         cut_principle_description(md)
+    playbook_skills(mode, skills)
     applied += apply(agents / "comment-sicko.md", [COMMENT_SICKO_FRONTMATTER, COMMENT_SICKO_HOWWHY], "agents/comment-sicko.md")
     for name, body in AGENTS.items():
         (agents / name).write_text(body, encoding="utf-8")
@@ -1605,6 +1647,18 @@ def validate(pack: Path, target: Path) -> None:
     for skill in sorted((pack / "skills").iterdir()):
         if not (skill / "SKILL.md").is_file():
             problems.append(f"skills/{skill.name}: no SKILL.md")
+            continue
+        text = (skill / "SKILL.md").read_text(encoding="utf-8")
+        if SHELL_COMMAND.search(text):
+            problems.append(
+                f"skills/{skill.name}: runs a shell command while it loads, and Claude Code pastes the skill's arguments "
+                "into that command as typed, so the pack keeps every skill static"
+            )
+        if skill.name.startswith(PLAYBOOK_SKILL_PREFIX) and len(skill_body(text)) > COMPACT_KEPT:
+            problems.append(
+                f"skills/{skill.name}: the body is {len(skill_body(text))} characters, past {COMPACT_KEPT}, "
+                "so compaction would cut its steps"
+            )
     for md in sorted(pack.rglob("*.md")):
         text = md.read_text(encoding="utf-8")
         rel = md.relative_to(pack)

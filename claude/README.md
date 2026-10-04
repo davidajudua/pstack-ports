@@ -28,19 +28,19 @@ The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`,
    It writes `~/.claude/rules/pstack-models.md` and the project's effort setting in `.claude/settings.local.json`.
 2. Type `/poteto-mode` to start the mode, as in Cursor.
    It stays in effect for the session through the per-turn reminder.
-   The mode matches the task to a playbook, loads it with `/playbook <name>`, opens a todolist with its steps, and loads the skills it needs.
+   The mode matches the task to a playbook, loads it as the `playbook-<name>` skill, opens a todolist with its steps, and loads the skills it needs.
 3. Type `/<skill>` to run any skill directly, for example `/how`, `/why`, `/interrogate`, or `/reflect`.
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `pack/skills/` | 51 skills: the 50 upstream skills, with `setup-pstack` rewritten for Claude Code, plus `playbook`, the `/playbook <name>` loader. `poteto-mode/` holds the mode, its 23 playbooks, references, and scripts. |
+| `pack/skills/` | 73 skills: the 50 upstream skills, with `setup-pstack` rewritten for Claude Code, plus a `playbook-<name>` skill for each of the 23 playbooks. `poteto-mode/` holds the mode, its playbooks, references, and scripts. |
 | `pack/agents/` | `poteto-agent` and `comment-sicko` from upstream, plus `pstack-readonly`, the Claude Code form of Cursor's `readonly: true` subagent. |
 | `pack/hooks/` | `pstack-readonly-search.py`, the `Read` hook `pstack-readonly` searches through, which is maintained by hand. `poteto-mode-reminder.sh` and `poteto-mode-compact.sh`, the two mode hooks, which are generated. |
 | `pack/settings.json` | The todo-tools environment variable, the skill listing budget, and the two mode hooks. |
 | `port/port.py` | The generator. |
-| `port/added-skills/` | Whole files the pack adds under `skills/`: the `playbook` skill and the regression tests for the safety fixes. |
+| `port/added-skills/` | Whole files the pack adds under `skills/`: the regression tests for the safety fixes. |
 | `port/tests/` | Tests for the generator, the search hook, and the worktree audit. |
 
 ## Cursor to Claude Code mapping
@@ -61,7 +61,7 @@ The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`,
 | `~/.cursor/projects/<slug>/agent-transcripts/` | `~/.claude/projects/<slug>/<session>.jsonl` |
 | Model slugs with an effort suffix | Aliases `fable`, `opus`, `sonnet`, `haiku`, with the budget written to `.claude/settings.local.json` by `/setup-pstack` |
 | `mode: true` with `reminder:` in skill frontmatter | `UserPromptSubmit` and `SessionStart` (`compact`) hooks in `.claude/settings.json` |
-| Open the playbook file | `/playbook <name>` |
+| Open the playbook file | `/playbook-<name>` |
 
 Skill frontmatter keeps only Claude Code keys.
 `disable-model-invocation: true` is dropped from every skill, so agents can load `poteto-mode` and its leaf skills through the Skill tool.
@@ -71,10 +71,13 @@ Principle descriptions are cut to their first sentence for the skill listing, an
 ## Mode persistence
 
 Auto-compaction keeps the first 20,000 characters of each skill loaded with the Skill tool, and nothing of a file read with `Read`.
-That is why the mode loads a playbook with `/playbook <name>` instead of reading its file.
+That is why each playbook is also a `playbook-<name>` skill that carries its text, and the mode loads that skill instead of reading the file.
+The skill is static.
+Claude Code pastes a skill's arguments into an inline shell command as typed, so a loader that handed the playbook name to a shell could not be quoted safely, and `port.py` refuses any pack skill that runs a shell command while it loads.
 The port reorders the mode's sections for the same reason.
 Playbooks comes right after Non-negotiables, so compaction keeps it, and Subagents comes last, because the compaction hook re-supplies the last section in full.
 `port.py` refuses a pack whose Playbooks section ends more than 12,000 characters into the mode's body, or whose last heading starts after character 19,600, since compaction would then cut text that the hook does not re-supply.
+It also refuses a playbook skill whose body passes character 19,600, since compaction would then cut its steps.
 It also refuses a last section that would push the compaction hook's context past Claude Code's 10,000-character cap, since the hook would then hand the model a file path and a 2,000-character preview instead.
 
 ## Read-only search
@@ -102,7 +105,7 @@ python3 claude/port/port.py "$upstream"
 
 `port.py <upstream-pstack> [pack-dir]` writes to `claude/pack/` by default.
 It builds the pack in a staging directory, applies every substitution as an exact match, and stops on the first upstream text that drifted.
-It then checks the staged pack for broken frontmatter, leftover Cursor paths, tools, and model slugs, a forced worktree removal, em dashes, and a missing search hook.
+It then checks the staged pack for broken frontmatter, leftover Cursor paths, tools, and model slugs, a forced worktree removal, em dashes, a skill that runs a shell command while it loads, and a missing search hook.
 It also checks the mode's section layout against the compaction bounds in [Mode persistence](#mode-persistence).
 Only a pack that passes replaces the installed skills, agents, mode hooks, and `settings.json`, so a failed run changes nothing.
 Fix a drifted entry in `port.py`, never the generated file.

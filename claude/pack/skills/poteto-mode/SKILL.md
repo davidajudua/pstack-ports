@@ -5,7 +5,7 @@ description: poteto's agent style for concise, detailed responses, deliberate su
 
 # Poteto mode
 
-This is the Claude Code port. Load a named skill or playbook with the Skill tool rather than by reading its file, because only a Skill-tool load survives compaction (`/playbook <name>` loads a playbook). `references/claude-code.md` maps Cursor's mechanisms to Claude Code, and relative paths resolve under `.claude/skills/poteto-mode/`.
+This is the Claude Code port. Load a named skill or playbook with the Skill tool rather than by reading its file, because only a Skill-tool load survives compaction (`/playbook-<name>` loads `playbooks/<name>.md`). `references/claude-code.md` maps Cursor's mechanisms to Claude Code, and relative paths resolve under `.claude/skills/poteto-mode/`.
 
 ## Non-negotiables
 
@@ -34,7 +34,7 @@ Remaining triggers:
 
 ## Playbooks
 
-Match the task to a playbook below and load it with the Skill tool: `/playbook <name>`, where `<name>` is the file's basename (`/playbook feature` loads `playbooks/feature.md`). A Read of the file does not survive compaction; a Skill-tool load does. Then, before any other tool call, open the todolist: one `TaskCreate` call per playbook step, in order, with the step text copied in verbatim, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`.
+Match the task to a playbook below and load it with the Skill tool as `playbook-<name>`, where `<name>` is the file's basename (`/playbook-feature` loads `playbooks/feature.md`). A Read of the file does not survive compaction; a Skill-tool load does. Then, before any other tool call, open the todolist: one `TaskCreate` call per playbook step, in order, with the step text copied in verbatim, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`.
 
 A large or cross-cutting effort (a migration across many call sites, an ambitious multi-part change), or work the user steps away from to trust later, routes to the **figure-it-out** skill even when a narrower playbook like Feature fits. Use **figure-it-out** whenever no bundled playbook fits. It designs a bespoke, rigorous playbook for the task. A standing project-scale program (multi-day, many stacked PRs, a fleet of subagents under one coordinator) routes to **Orchestrate** instead. figure-it-out designs one bespoke run, orchestrate runs the program.
 

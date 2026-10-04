@@ -1,0 +1,21 @@
+---
+name: playbook-worktree-cleanup
+description: "The Worktree and simulator cleanup playbook of poteto-mode, loaded through the Skill tool so its steps survive compaction."
+---
+
+The Worktree and simulator cleanup playbook, from .claude/skills/poteto-mode/playbooks/worktree-cleanup.md. Relative paths below resolve under .claude/skills/poteto-mode/.
+
+### Worktree and simulator cleanup
+
+**You own the disk and the safety gate.** Prune merged or abandoned git worktrees and stale iOS simulators to reclaim space. Deletion is irreversible, so every step guards against deleting something in use or holding uncommitted work.
+
+1. Snapshot and audit. Record `df -h /`, then run `.claude/skills/poteto-mode/scripts/worktree-audit.sh` from the repository root (principle-build-the-lever). It reads paths from `git worktree list`, never hand-typed, since a hand-typed `myrepo-worktrees/x` misses one that lives at `.claude/worktrees/x` (principle-encode-lessons-in-structure). It classifies each worktree by size, age, merge state, uncommitted work, PR state, and the newest chat that touched it, then suggests a bucket. The transcript scan is slow, so background it.
+2. The bucket is advice, not permission. The pinned and active chats are the real artifact (principle-prove-it-works). Get that set from the user or sidebar and cross-check every candidate. The lever has marked `safe` a worktree the user had pinned, so the pinned set wins.
+3. Verify usage before deleting. For every `verify-recent-chat` row, or anything you doubt, fan `pstack-readonly` subagents out to read the transcripts and report whether the chat is pinned or ongoing and which worktrees it touches (principle-guard-the-context-window, transcripts are bulk). Pass `model: sonnet` on each read-only spawn. Omitting `model` is wrong, because the call inherits the parent model. A pinned chat spawns arena and repro trees into sibling worktrees via background subagents, and those are in use even when their names never hit the sidebar.
+4. Pause on irreversible loss. `wip:N` is N tracked uncommitted edits. Show the diff and get a decision first, since removing a clean worktree is recoverable from its branch but uncommitted work is gone. `untracked:N` (`hold-untracked`) is N untracked files, which removal deletes too, so name the files and get the same decision. `wip:N,untracked:M` has both, so show the diff and name the files. `hold-unreachable` is a detached HEAD whose commits no branch or tag contains, so removal strands them; show `git log` and get a decision. Per Autonomy, clean and merged and not-in-use proceeds. `wip`, `untracked`, `hold-unreachable`, and in-use pause.
+5. Prune the confirmed set. Per path, `git worktree remove <path>`, never `--force`. If git refuses, the worktree has uncommitted or untracked work, so take it back to step 4. `git worktree remove` already deletes ignored build output. Then `git worktree prune`. Branch refs survive, so a removed worktree's branch commits are not lost. Confirm with `df -h /` and re-list.
+6. Simulators and other reclaimers. Simulators are usually the next-biggest win. `xcrun simctl --set testing delete all` (XCTestDevices clones), `xcrun simctl delete unavailable`, and `xcrun simctl runtime list` then `runtime delete <id>` for old runtimes. More when needed: Xcode `DerivedData` and `iOS DeviceSupport`, `~/.claude/projects/<slug>/` (old session transcripts and their `subagents/` directories balloon), package caches (pnpm, uv, brew, yarn). Clear only caches the user has not said to keep.
+
+This is the one playbook that deletes user state with no code review to catch a slip, so the gates above are the review.
+
+**Reply:** `df -h /` before and after with space reclaimed, the worktrees pruned, and a one-line reason for each held back (in-use by which chat, or uncommitted work).

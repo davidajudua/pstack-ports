@@ -40,13 +40,8 @@ MODE_SECTIONS = {
     "Comments": "Keep comments rare and specific.",
     "Playbooks": PLAYBOOKS_LEAD,
 }
-FEATURE = "# Feature\n\n1. Read the code.\n"
-OPENING_A_PR = "# Opening a PR\n\n1. Push the branch.\n"
-PLAYBOOK_HEADER = (
-    "Playbook {0}, from .claude/skills/poteto-mode/playbooks/{0}.md. "
-    "Relative paths below resolve under .claude/skills/poteto-mode/.\n\n"
-)
-PLAYBOOK_USAGE = "Usage: /playbook <name>. Available playbooks: feature, opening-a-pr\n"
+FEATURE = "### Feature\n\n1. Read the code.\n"
+OPENING_A_PR = "### Opening a PR\n\n1. Push the branch.\n"
 # The first sentence of a principle's description says when to apply it, and is all the port keeps.
 PRINCIPLE_TRIGGER = "Apply when a foo needs care."
 
@@ -68,6 +63,16 @@ def principle(name: str, description: str) -> str:
 def first_sentence(length: int) -> str:
     """A first sentence of exactly `length` characters."""
     return "Apply when " + "x" * (length - 12) + "."
+
+
+def playbook_skill(name: str, title: str, text: str) -> str:
+    """The static skill the port writes for the playbook `name`, whose first line is `### {title}`."""
+    return (
+        f"---\nname: playbook-{name}\n"
+        f'description: "The {title} playbook of poteto-mode, loaded through the Skill tool so its steps survive compaction."\n'
+        f"---\n\nThe {title} playbook, from .claude/skills/poteto-mode/playbooks/{name}.md. "
+        f"Relative paths below resolve under .claude/skills/poteto-mode/.\n\n{text}"
+    )
 
 
 def poteto_mode(sections: dict[str, str], reminder: bool = True) -> str:
@@ -98,7 +103,7 @@ class PortTest(unittest.TestCase):
         )
         write(self.upstream / "agents" / "poteto-agent.md", "Cursor agent.\n")
         self.added = self.tmp / "added-skills"
-        shutil.copytree(port.ADDED_SKILL_FILES / "playbook", self.added / "playbook")
+        self.added.mkdir()
 
         self.project = self.tmp / "project"
         self.pack = self.project / ".claude"
@@ -160,10 +165,6 @@ class PortTest(unittest.TestCase):
         result = subprocess.run(["sh", str(script)], capture_output=True, text=True, check=True)
         return json.loads(result.stdout)["hookSpecificOutput"]
 
-    def load_playbook(self, *args: str) -> str:
-        script = self.pack / "skills" / "playbook" / "scripts" / "load.sh"
-        return subprocess.run(["sh", str(script), *args], capture_output=True, text=True, check=True).stdout
-
     def test_drifted_upstream_leaves_installed_pack_untouched(self) -> None:
         write(self.upstream / "skills" / "foo" / "SKILL.md", FOO_UPSTREAM.replace("Task tool", "Task tool now"))
         self.assertRefusedUntouched()
@@ -208,7 +209,7 @@ class PortTest(unittest.TestCase):
         self.assertEqual(port.frontmatter(text), {"name": "poteto-mode", "description": MODE_DESCRIPTION})
         self.assertEqual(re.findall(r"^## (.+)$", text, re.MULTILINE), list(port.SECTION_ORDER))
         self.assertIn("The per-playbook lines above name only the content unique to that playbook.", text)
-        self.assertIn("load it with the Skill tool: `/playbook <name>`", text)
+        self.assertIn("load it with the Skill tool as `playbook-<name>`", text)
         ported = dict(MODE_SECTIONS)
         for old, new in self.mode_pairs:
             ported = {name: paragraph.replace(old, new) for name, paragraph in ported.items()}
@@ -274,32 +275,58 @@ class PortTest(unittest.TestCase):
                 )
                 self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["hookEventName"], event)
 
-    def test_playbook_loader_prints_the_named_playbook(self) -> None:
+    def test_each_playbook_becomes_a_static_skill(self) -> None:
         self.run_port()
-        skill = self.pack / "skills" / "playbook"
-        text = (skill / "SKILL.md").read_text(encoding="utf-8")
-        self.assertEqual(text, (self.added / "playbook" / "SKILL.md").read_text(encoding="utf-8"))
-        # Claude Code substitutes the skill directory and the raw arguments into the line, then runs it.
-        [command] = re.findall(r"^!`(.+)`$", text, re.MULTILINE)
-        command = command.replace("${CLAUDE_SKILL_DIR}", str(skill))
+        skills = self.pack / "skills"
+        self.assertEqual(sorted(p.name for p in skills.glob("playbook-*")), ["playbook-feature", "playbook-opening-a-pr"])
+        self.assertEqual(
+            (skills / "playbook-feature" / "SKILL.md").read_text(encoding="utf-8"),
+            playbook_skill("feature", "Feature", FEATURE),
+        )
+        self.assertEqual(
+            (skills / "playbook-opening-a-pr" / "SKILL.md").read_text(encoding="utf-8"),
+            playbook_skill("opening-a-pr", "Opening a PR", OPENING_A_PR),
+        )
 
-        def run_line(arguments: str) -> str:
-            line = command.replace("$ARGUMENTS", arguments)
-            return subprocess.run(["sh", "-c", line], cwd=self.project, capture_output=True, text=True, check=True).stdout
+    def test_skill_that_runs_a_shell_command_is_refused(self) -> None:
+        # Claude Code pastes the arguments into the command as typed, so `/bar feature'; cmd; '` ran cmd through the
+        # single-quoted loader the pack used to ship, and double quotes or no quotes let `$(cmd)` or `; cmd` through.
+        for line in (
+            "!`sh \"${CLAUDE_SKILL_DIR}/scripts/load.sh\" '$ARGUMENTS'`",
+            '!`sh "${CLAUDE_SKILL_DIR}/scripts/load.sh" "$ARGUMENTS"`',
+            "The playbook: !`cat playbooks/$0.md`",
+            "```!\ncat playbooks/$ARGUMENTS.md\n```",
+            "Today: !`date`",
+        ):
+            with self.subTest(line):
+                write(self.upstream / "skills" / "bar" / "SKILL.md", f"---\nname: bar\ndescription: Bar.\n---\n\n{line}\n")
+                self.assertIn("skills/bar: runs a shell command while it loads", self.assertRefusedUntouched())
+        write(
+            self.upstream / "skills" / "bar" / "SKILL.md",
+            "---\nname: bar\ndescription: Bar.\n---\n\nRead playbooks/$ARGUMENTS.md where the loose type forces `!`, then run `date` yourself.\n",
+        )
+        self.run_port()
+        self.assertIn("forces `!`, then run", (self.pack / "skills" / "bar" / "SKILL.md").read_text(encoding="utf-8"))
 
-        self.assertEqual(run_line("Opening a PR"), PLAYBOOK_HEADER.format("opening-a-pr") + OPENING_A_PR)
-        for arguments in ("feature; echo INJECTED", "a$(echo SUB)b"):
-            with self.subTest(arguments=arguments):
-                self.assertEqual(run_line(arguments), PLAYBOOK_USAGE)
+    def test_playbook_skill_past_the_compaction_bound_is_refused(self) -> None:
+        playbook = self.upstream / "skills" / "poteto-mode" / "playbooks" / "big.md"
+        fixed = len(port.skill_body(playbook_skill("big", "Big", "### Big\n\n")))
+        write(playbook, "### Big\n\n" + "x" * (port.COMPACT_KEPT - fixed))
+        self.run_port()
+        installed = self.pack / "skills" / "playbook-big" / "SKILL.md"
+        self.assertEqual(len(port.skill_body(installed.read_text(encoding="utf-8"))), port.COMPACT_KEPT)
+        write(playbook, "### Big\n\n" + "x" * (port.COMPACT_KEPT - fixed + 1))
+        self.assertIn(
+            f"skills/playbook-big: the body is {port.COMPACT_KEPT + 1} characters, past {port.COMPACT_KEPT}",
+            self.assertRefusedUntouched(),
+        )
 
-        self.assertEqual(self.load_playbook("feature"), PLAYBOOK_HEADER.format("feature") + FEATURE)
-        for args in (["Opening a PR"], ["opening-a-pr.md"]):
-            with self.subTest(args=args):
-                self.assertEqual(self.load_playbook(*args), PLAYBOOK_HEADER.format("opening-a-pr") + OPENING_A_PR)
-        # The last name reaches a file that exists, so only the character check refuses it.
-        for args in (["nope"], [], ["../x"], ["../references/claude-code"]):
-            with self.subTest(args=args):
-                self.assertEqual(self.load_playbook(*args), PLAYBOOK_USAGE)
+    def test_playbook_that_cannot_become_a_skill_is_refused(self) -> None:
+        write(self.upstream / "skills" / "poteto-mode" / "playbooks" / "untitled.md", "1. Push the branch.\n")
+        self.assertIn("skills/poteto-mode/playbooks/untitled.md: no ### title", self.assertRefusedUntouched())
+        (self.upstream / "skills" / "poteto-mode" / "playbooks" / "untitled.md").unlink()
+        write(self.upstream / "skills" / "playbook-feature" / "SKILL.md", "---\nname: playbook-feature\ndescription: Theirs.\n---\n")
+        self.assertIn("skills/playbook-feature: upstream now ships a skill of this name", self.assertRefusedUntouched())
 
     def test_agent_that_pins_effort_is_refused(self) -> None:
         pinned = port.AGENTS["poteto-agent.md"].replace("\nbackground: true\n", "\nbackground: true\neffort: high\n")
