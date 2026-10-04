@@ -25,7 +25,7 @@ The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`,
 ## Use
 
 1. Run `/setup-pstack` once to pick a reasoning budget and per-role models.
-   It writes `~/.claude/rules/pstack-models.md`.
+   It writes `~/.claude/rules/pstack-models.md` and the project's effort setting in `.claude/settings.local.json`.
 2. Type `/poteto-mode` to start the mode, as in Cursor.
    It stays in effect for the session through the per-turn reminder.
    The mode matches the task to a playbook, loads it with `/playbook <name>`, opens a todolist with its steps, and loads the skills it needs.
@@ -59,7 +59,7 @@ The `poteto-mode` helper scripts need `bun`, and `worktree-audit.sh` needs `rg`,
 | Cursor's built-in `create-skill` | `skill-creator` |
 | `~/.cursor/rules/pstack-models.mdc` | `~/.claude/rules/pstack-models.md` |
 | `~/.cursor/projects/<slug>/agent-transcripts/` | `~/.claude/projects/<slug>/<session>.jsonl` |
-| Model slugs with an effort suffix | Aliases `fable`, `opus`, `sonnet`, `haiku`, with effort from the session level |
+| Model slugs with an effort suffix | Aliases `fable`, `opus`, `sonnet`, `haiku`, with the budget written to `.claude/settings.local.json` by `/setup-pstack` |
 | `mode: true` with `reminder:` in skill frontmatter | `UserPromptSubmit` and `SessionStart` (`compact`) hooks in `.claude/settings.json` |
 | Open the playbook file | `/playbook <name>` |
 

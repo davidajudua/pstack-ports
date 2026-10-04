@@ -280,6 +280,11 @@ class PortTest(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(self.load_playbook(*args), PLAYBOOK_USAGE)
 
+    def test_setup_pstack_writes_the_budget_into_project_settings(self) -> None:
+        self.assertIn("settings.local.json", port.SETUP_PSTACK)
+        self.assertIn('"CLAUDE_CODE_EFFORT_LEVEL": "max"', port.SETUP_PSTACK)
+        self.assertNotIn("~/.claude/settings.json", port.SETUP_PSTACK)
+
     def test_claude_code_reference_is_installed(self) -> None:
         self.run_port()
         reference = (self.pack / "skills" / "poteto-mode" / "references" / "claude-code.md").read_text(encoding="utf-8")
@@ -291,6 +296,13 @@ class PortTest(unittest.TestCase):
         self.assertIn("Spawn it with the Agent tool.", (self.pack / "skills" / "foo" / "SKILL.md").read_text())
         self.assertEqual((self.pack / "skills" / "setup-pstack" / "SKILL.md").read_text(), port.SETUP_PSTACK)
         self.assertEqual((self.pack / "agents" / "pstack-readonly.md").read_text(), port.AGENTS["pstack-readonly.md"])
+        agent = (self.pack / "agents" / "poteto-agent.md").read_text(encoding="utf-8")
+        self.assertEqual(agent, port.AGENTS["poteto-agent.md"])
+        self.assertIn("\nskills:\n  - poteto-mode\n", agent)
+        keys = port.frontmatter(agent)
+        self.assertIn("skills", keys)
+        self.assertIn("background", keys)
+        self.assertNotIn("is_background", keys)
         self.assertEqual((self.pack / "settings.json").read_text(), port.SETTINGS_JSON)
         self.assertEqual((self.pack / "settings.local.json").read_text(), '{"local": true}\n')
         self.assertEqual(
