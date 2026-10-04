@@ -75,6 +75,7 @@ That is why the mode loads a playbook with `/playbook <name>` instead of reading
 The port reorders the mode's sections for the same reason.
 Playbooks comes right after Non-negotiables, so compaction keeps it, and Subagents comes last, because the compaction hook re-supplies the last section in full.
 `port.py` refuses a pack whose Playbooks section ends more than 12,000 characters into the mode's body, or whose last heading starts after character 19,600, since compaction would then cut text that the hook does not re-supply.
+It also refuses a last section that would push the compaction hook's context past Claude Code's 10,000-character cap, since the hook would then hand the model a file path and a 2,000-character preview instead.
 
 ## Read-only search
 

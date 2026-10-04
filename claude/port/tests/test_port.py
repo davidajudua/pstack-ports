@@ -294,10 +294,22 @@ class PortTest(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(self.load_playbook(*args), PLAYBOOK_USAGE)
 
-    def test_setup_pstack_writes_the_budget_into_project_settings(self) -> None:
-        self.assertIn("settings.local.json", port.SETUP_PSTACK)
-        self.assertIn('"CLAUDE_CODE_EFFORT_LEVEL": "max"', port.SETUP_PSTACK)
-        self.assertNotIn("~/.claude/settings.json", port.SETUP_PSTACK)
+    def test_agent_that_pins_effort_is_refused(self) -> None:
+        pinned = port.AGENTS["poteto-agent.md"].replace("\nbackground: true\n", "\nbackground: true\neffort: high\n")
+        self.assertNotEqual(pinned, port.AGENTS["poteto-agent.md"])
+        with mock.patch.dict(port.AGENTS, {"poteto-agent.md": pinned}):
+            self.assertIn("agents/poteto-agent: pins effort", self.assertRefusedUntouched())
+
+    def test_compact_hook_context_past_the_cap_is_refused(self) -> None:
+        fixed = len(f"{port.RECOVERY_NOTE}\n\n{port.FINAL_SECTION_RULE}\n\n## Subagents\n\n\n\n{REMINDER}")
+        write(self.mode, poteto_mode({**MODE_SECTIONS, "Subagents": "x" * (port.HOOK_CONTEXT_MAX - fixed)}))
+        self.run_port()
+        self.assertEqual(len(self.run_hook("poteto-mode-compact.sh")["additionalContext"]), port.HOOK_CONTEXT_MAX)
+        write(self.mode, poteto_mode({**MODE_SECTIONS, "Subagents": "x" * (port.HOOK_CONTEXT_MAX - fixed + 1)}))
+        self.assertIn(
+            f"the SessionStart hook's additional context is {port.HOOK_CONTEXT_MAX + 1} characters",
+            self.assertRefusedUntouched(),
+        )
 
     def test_principle_description_is_cut_to_its_first_sentence(self) -> None:
         installed = self.pack / "skills" / "principle-foo" / "SKILL.md"
@@ -309,6 +321,8 @@ class PortTest(unittest.TestCase):
             ("Does a foo need care? Apply this.", "Does a foo need care?"),
             (f'"{first_sentence(20)} Then check it."', f'"{first_sentence(20)}"'),
             (f'"{first_sentence(160)} Then check it."', f'"{first_sentence(160)}"'),
+            (f'"{PRINCIPLE_TRIGGER}"', f'"{PRINCIPLE_TRIGGER}"'),
+            ("Apply when debugging.", "Apply when debugging."),
         ):
             with self.subTest(upstream):
                 write(self.principle, principle("principle-foo", upstream))
@@ -348,11 +362,10 @@ class PortTest(unittest.TestCase):
         self.assertEqual((self.pack / "agents" / "pstack-readonly.md").read_text(), port.AGENTS["pstack-readonly.md"])
         agent = (self.pack / "agents" / "poteto-agent.md").read_text(encoding="utf-8")
         self.assertEqual(agent, port.AGENTS["poteto-agent.md"])
-        self.assertIn("\nskills:\n  - poteto-mode\n", agent)
-        keys = port.frontmatter(agent)
-        self.assertIn("skills", keys)
-        self.assertIn("background", keys)
-        self.assertNotIn("is_background", keys)
+        preloaded = re.findall(r"^  - (\S+)$", agent.split("\n---\n", 1)[0], re.MULTILINE)
+        self.assertEqual(preloaded, ["poteto-mode"])
+        for name in preloaded:
+            self.assertTrue((self.pack / "skills" / name / "SKILL.md").is_file(), name)
         self.assertEqual((self.pack / "settings.json").read_text(), port.SETTINGS_JSON)
         settings = json.loads((self.pack / "settings.json").read_text(encoding="utf-8"))
         self.assertEqual(list(settings), ["env", "skillListingBudgetFraction", "hooks"])
