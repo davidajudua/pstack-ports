@@ -102,8 +102,8 @@ In an untrusted workspace the hook never runs, so search is off and the agent st
 - `watch-pr` never reports `READY` while GitHub reports the merge state `BLOCKED` or the review decision `REVIEW_REQUIRED`, and it pages through every review thread instead of the first 100.
 - `orch` serializes lock acquisition, recovers it from a process that died midway, and never takes the store lock from a live or unknown owner.
 - `orch inbox drain` deletes only the pointers it read and leaves `inbox/` in place, so a drain no longer breaks `inbox/` or strands pointers in a hidden drain directory.
-  It does not promise crash-proof at-least-once delivery.
-  Known limitation: a pointer that was already unlinked but not yet returned to the caller when the drain dies is lost.
+  Before it unlinks anything, the drain records the pointers it read in `inbox/.inbox-hold`, and the next `peek` or `drain` serves them again if the drain dies before removing that file.
+  Known limitation: a drain killed after removing `.inbox-hold` but before the caller reads its output loses those pointers.
 - `make-bot-ui` binds the page only to the Tailscale address and checks a per-UI token on every request.
 - `worktree-audit.sh` holds a worktree with untracked files (`hold-untracked`) or a detached HEAD whose commits no ref contains (`hold-unreachable`).
 - The worktree-cleanup playbook removes a worktree with `git worktree remove`, never `--force`.
