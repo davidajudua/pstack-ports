@@ -3,12 +3,13 @@ import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import {
   access,
+  link,
   mkdir,
-  open,
   readFile,
   readdir,
   rename,
   rm,
+  rmdir,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -331,14 +332,18 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function atomicWrite(path: string, contents: string): Promise<void> {
+async function atomicWrite(
+  path: string,
+  contents: string,
+  { exclusive = false } = {}
+): Promise<void> {
   const temporary = join(
     dirname(path),
     `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`
   );
   try {
     await writeFile(temporary, contents, { flag: "wx" });
-    await rename(temporary, path);
+    await (exclusive ? link : rename)(temporary, path);
   } finally {
     await rm(temporary, { force: true });
   }
@@ -376,20 +381,72 @@ function holderIsDead(holder: string): boolean {
   }
 }
 
+async function replaceEmptyDirectory(
+  source: string,
+  target: string
+): Promise<boolean> {
+  try {
+    await rename(source, target);
+    return true;
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === "ENOTEMPTY" || code === "EEXIST") return false;
+    throw error;
+  }
+}
+
+async function clearDeadOwners(guard: string): Promise<void> {
+  let entries: string[] = [];
+  try {
+    entries = await readdir(guard);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+  }
+  for (const entry of entries) {
+    const holder = entry.split(".")[0] ?? "";
+    if (!holderIsDead(holder))
+      throw new UserError(
+        `lock acquisition in progress by pid ${holder}; retry`
+      );
+    await rm(join(guard, entry), { force: true });
+  }
+}
+
+async function acquireGuard(store: string): Promise<() => Promise<void>> {
+  const guard = join(store, ".orch.lock-acquisition");
+  const owner = `${process.pid}.${randomUUID()}`;
+  const staged = `${guard}-${owner}`;
+  await mkdir(staged);
+  try {
+    await writeFile(join(staged, owner), "");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await replaceEmptyDirectory(staged, guard)) {
+        return async (): Promise<void> => {
+          await unlink(join(guard, owner));
+          try {
+            await rmdir(guard);
+          } catch (error) {
+            const code = errorCode(error);
+            if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST")
+              throw error;
+          }
+        };
+      }
+      await clearDeadOwners(guard);
+    }
+    throw new UserError("lock acquisition in progress; retry");
+  } finally {
+    await rm(staged, { recursive: true, force: true });
+  }
+}
+
 async function acquireLock(
   store: string,
   options: OpenStoreOptions
 ): Promise<() => Promise<void>> {
   const path = join(store, LOCK_FILE);
-  const guard = join(store, ".orch.lock-acquisition");
   const token = `${process.pid}\n${randomUUID()}\n`;
-  try {
-    await mkdir(guard);
-  } catch (error) {
-    if (errorCode(error) === "EEXIST")
-      throw new UserError("lock acquisition in progress; retry. If its owner crashed, verify no acquisition is running before removing .orch.lock-acquisition");
-    throw error;
-  }
+  const releaseGuard = await acquireGuard(store);
   try {
     let contents: string | null = null;
     try {
@@ -404,14 +461,9 @@ async function acquireLock(
       options.onStaleLock?.(holder);
       await unlink(path);
     }
-    const handle = await open(path, "wx");
-    try {
-      await handle.writeFile(token);
-    } finally {
-      await handle.close();
-    }
+    await atomicWrite(path, token, { exclusive: true });
   } finally {
-    await rm(guard, { recursive: true });
+    await releaseGuard();
   }
   return async (): Promise<void> => {
     try {
@@ -537,9 +589,14 @@ function pointerCells(pointer: InboxPointer): readonly string[] {
   ];
 }
 
+interface PointerFile {
+  readonly name: string;
+  readonly pointer: InboxPointer;
+}
+
 async function readPointers(
   directory: string
-): Promise<readonly InboxPointer[]> {
+): Promise<readonly PointerFile[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(directory, { withFileTypes: true });
@@ -551,7 +608,7 @@ async function readPointers(
     }
     throw error;
   }
-  const result: InboxPointer[] = [];
+  const result: PointerFile[] = [];
   const files = entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".tsv"))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -565,11 +622,14 @@ async function readPointers(
       throw new UserError(`inbox pointer ${entry.name} is malformed`);
     }
     result.push({
-      ts: row[0] ?? "",
-      agent: row[1] ?? "",
-      unit: row[2] ?? "",
-      status: row[3] ?? "",
-      report: row[4] ?? "",
+      name: entry.name,
+      pointer: {
+        ts: row[0] ?? "",
+        agent: row[1] ?? "",
+        unit: row[2] ?? "",
+        status: row[3] ?? "",
+        report: row[4] ?? "",
+      },
     });
   }
   return result;
@@ -1387,24 +1447,17 @@ export function openStore(
       drain: async () => {
         await beginWrite();
         const inbox = join(store, "inbox");
-        const rows = await readPointers(inbox);
-        const drained = join(
-          store,
-          `.inbox-drain-${process.pid}-${randomUUID()}`
-        );
-        await rename(inbox, drained);
-        try {
-          await mkdir(inbox);
-        } catch (error) {
-          await rename(drained, inbox);
-          throw error;
+        const files = await readPointers(inbox);
+        for (const { name } of files) {
+          await unlink(join(inbox, name));
         }
-        await rm(drained, { recursive: true, force: true });
-        return rows;
+        return files.map(({ pointer }) => pointer);
       },
       peek: async () => {
         ensureOpen();
-        return readPointers(join(store, "inbox"));
+        return (await readPointers(join(store, "inbox"))).map(
+          ({ pointer }) => pointer
+        );
       },
       count: async () => {
         ensureOpen();
