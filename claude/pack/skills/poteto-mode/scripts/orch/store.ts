@@ -596,15 +596,30 @@ interface PointerFile {
 
 const INBOX_HOLD = ".inbox-hold";
 
-async function readPointerDirectory(
-  directory: string,
-  missing: "throw" | "empty"
+function parsePointer(name: string, raw: string): PointerFile {
+  const row = raw.split("\t");
+  if (/[\r\n]/.test(raw) || row.length !== 5) {
+    throw new UserError(`inbox pointer ${name} is malformed`);
+  }
+  return {
+    name,
+    pointer: {
+      ts: row[0] ?? "",
+      agent: row[1] ?? "",
+      unit: row[2] ?? "",
+      status: row[3] ?? "",
+      report: row[4] ?? "",
+    },
+  };
+}
+
+async function readPointers(
+  directory: string
 ): Promise<readonly PointerFile[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch (error) {
-    if (errorCode(error) === "ENOENT" && missing === "empty") return [];
     if (errorCode(error) === "ENOENT") {
       throw new UserError(
         `store is not initialized at ${dirname(directory)}; run orch init`
@@ -621,50 +636,20 @@ async function readPointerDirectory(
       /\r?\n$/,
       ""
     );
-    const row = raw.split("\t");
-    if (/[\r\n]/.test(raw) || row.length !== 5) {
-      throw new UserError(`inbox pointer ${entry.name} is malformed`);
-    }
-    result.push({
-      name: entry.name,
-      pointer: {
-        ts: row[0] ?? "",
-        agent: row[1] ?? "",
-        unit: row[2] ?? "",
-        status: row[3] ?? "",
-        report: row[4] ?? "",
-      },
-    });
+    result.push(parsePointer(entry.name, raw));
   }
-  return result;
-}
-
-async function readPointers(
-  directory: string
-): Promise<readonly PointerFile[]> {
-  const byName = new Map<string, PointerFile>();
-  for (const file of [
-    ...(await readPointerDirectory(directory, "throw")),
-    ...(await readPointerDirectory(join(directory, INBOX_HOLD), "empty")),
-  ]) {
-    byName.set(file.name, file);
+  let held = "";
+  try {
+    held = await readFile(join(directory, INBOX_HOLD), "utf8");
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
   }
-  return [...byName.values()].sort((left, right) =>
-    left.name.localeCompare(right.name)
-  );
-}
-
-async function restoreInboxHold(inbox: string): Promise<void> {
-  const hold = join(inbox, INBOX_HOLD);
-  for (const file of await readPointerDirectory(hold, "empty")) {
-    const dest = join(inbox, file.name);
-    if (await exists(dest)) {
-      await unlink(join(hold, file.name));
-    } else {
-      await rename(join(hold, file.name), dest);
-    }
+  for (const line of held.split("\n").filter(Boolean)) {
+    const [name = "", ...cells] = line.split("\t");
+    if (!result.some((file) => file.name === name))
+      result.push(parsePointer(name, cells.join("\t")));
   }
-  await rm(hold, { recursive: true, force: true });
+  return result.sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function renderGates(rows: readonly Gate[]): string {
@@ -1479,17 +1464,21 @@ export function openStore(
       drain: async () => {
         await beginWrite();
         const inbox = join(store, "inbox");
-        await restoreInboxHold(inbox);
         const files = await readPointers(inbox);
         const hold = join(inbox, INBOX_HOLD);
-        await mkdir(hold);
+        await atomicWrite(
+          hold,
+          files
+            .map(
+              ({ name, pointer }) =>
+                `${[name, ...pointerCells(pointer)].join("\t")}\n`
+            )
+            .join("")
+        );
         for (const { name } of files) {
-          await link(join(inbox, name), join(hold, name));
+          await rm(join(inbox, name), { force: true });
         }
-        for (const { name } of files) {
-          await unlink(join(inbox, name));
-        }
-        await rm(hold, { recursive: true, force: true });
+        await unlink(hold);
         return files.map(({ pointer }) => pointer);
       },
       peek: async () => {

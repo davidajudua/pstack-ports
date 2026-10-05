@@ -1105,6 +1105,25 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "  readonly pointer: InboxPointer;\n"
             "}\n"
             "\n"
+            "const INBOX_HOLD = \".inbox-hold\";\n"
+            "\n"
+            "function parsePointer(name: string, raw: string): PointerFile {\n"
+            "  const row = raw.split(\"\\t\");\n"
+            "  if (/[\\r\\n]/.test(raw) || row.length !== 5) {\n"
+            "    throw new UserError(`inbox pointer ${name} is malformed`);\n"
+            "  }\n"
+            "  return {\n"
+            "    name,\n"
+            "    pointer: {\n"
+            "      ts: row[0] ?? \"\",\n"
+            "      agent: row[1] ?? \"\",\n"
+            "      unit: row[2] ?? \"\",\n"
+            "      status: row[3] ?? \"\",\n"
+            "      report: row[4] ?? \"\",\n"
+            "    },\n"
+            "  };\n"
+            "}\n"
+            "\n"
             "async function readPointers(\n"
             "  directory: string\n"
             "): Promise<readonly PointerFile[]> {\n",
@@ -1114,23 +1133,33 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "  const result: PointerFile[] = [];\n",
         ),
         (
+            "    const row = raw.split(\"\\t\");\n"
+            "    if (/[\\r\\n]/.test(raw) || row.length !== 5) {\n"
+            "      throw new UserError(`inbox pointer ${entry.name} is malformed`);\n"
+            "    }\n"
             "    result.push({\n"
             "      ts: row[0] ?? \"\",\n"
             "      agent: row[1] ?? \"\",\n"
             "      unit: row[2] ?? \"\",\n"
             "      status: row[3] ?? \"\",\n"
             "      report: row[4] ?? \"\",\n"
-            "    });\n",
-            "    result.push({\n"
-            "      name: entry.name,\n"
-            "      pointer: {\n"
-            "        ts: row[0] ?? \"\",\n"
-            "        agent: row[1] ?? \"\",\n"
-            "        unit: row[2] ?? \"\",\n"
-            "        status: row[3] ?? \"\",\n"
-            "        report: row[4] ?? \"\",\n"
-            "      },\n"
-            "    });\n",
+            "    });\n"
+            "  }\n"
+            "  return result;\n",
+            "    result.push(parsePointer(entry.name, raw));\n"
+            "  }\n"
+            "  let held = \"\";\n"
+            "  try {\n"
+            "    held = await readFile(join(directory, INBOX_HOLD), \"utf8\");\n"
+            "  } catch (error) {\n"
+            "    if (errorCode(error) !== \"ENOENT\") throw error;\n"
+            "  }\n"
+            "  for (const line of held.split(\"\\n\").filter(Boolean)) {\n"
+            "    const [name = \"\", ...cells] = line.split(\"\\t\");\n"
+            "    if (!result.some((file) => file.name === name))\n"
+            "      result.push(parsePointer(name, cells.join(\"\\t\")));\n"
+            "  }\n"
+            "  return result.sort((left, right) => left.name.localeCompare(right.name));\n",
         ),
         (
             "async function acquireLock(\n",
@@ -1297,9 +1326,20 @@ SCRIPT_SUBSTITUTIONS: dict[str, list[tuple[str, str]]] = {
             "        await rm(drained, { recursive: true, force: true });\n"
             "        return rows;\n",
             "        const files = await readPointers(inbox);\n"
+            "        const hold = join(inbox, INBOX_HOLD);\n"
+            "        await atomicWrite(\n"
+            "          hold,\n"
+            "          files\n"
+            "            .map(\n"
+            "              ({ name, pointer }) =>\n"
+            "                `${[name, ...pointerCells(pointer)].join(\"\\t\")}\\n`\n"
+            "            )\n"
+            "            .join(\"\")\n"
+            "        );\n"
             "        for (const { name } of files) {\n"
-            "          await unlink(join(inbox, name));\n"
+            "          await rm(join(inbox, name), { force: true });\n"
             "        }\n"
+            "        await unlink(hold);\n"
             "        return files.map(({ pointer }) => pointer);\n",
         ),
         (
