@@ -234,6 +234,7 @@ try {
       ).toEqual(layout);
       const store = openStore(directory);
       const left = (await store.inbox.peek()).map((pointer) => pointer.unit);
+      expect([...left].sort()).toEqual(["u1", "u2"]);
       await store.inbox.push({ agent: "worker", unit: "u3", status: "done" });
       expect((await store.inbox.drain()).map((pointer) => pointer.unit)).toEqual([
         ...left,

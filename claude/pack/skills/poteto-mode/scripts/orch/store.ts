@@ -594,13 +594,17 @@ interface PointerFile {
   readonly pointer: InboxPointer;
 }
 
-async function readPointers(
-  directory: string
+const INBOX_HOLD = ".inbox-hold";
+
+async function readPointerDirectory(
+  directory: string,
+  missing: "throw" | "empty"
 ): Promise<readonly PointerFile[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch (error) {
+    if (errorCode(error) === "ENOENT" && missing === "empty") return [];
     if (errorCode(error) === "ENOENT") {
       throw new UserError(
         `store is not initialized at ${dirname(directory)}; run orch init`
@@ -633,6 +637,34 @@ async function readPointers(
     });
   }
   return result;
+}
+
+async function readPointers(
+  directory: string
+): Promise<readonly PointerFile[]> {
+  const byName = new Map<string, PointerFile>();
+  for (const file of [
+    ...(await readPointerDirectory(directory, "throw")),
+    ...(await readPointerDirectory(join(directory, INBOX_HOLD), "empty")),
+  ]) {
+    byName.set(file.name, file);
+  }
+  return [...byName.values()].sort((left, right) =>
+    left.name.localeCompare(right.name)
+  );
+}
+
+async function restoreInboxHold(inbox: string): Promise<void> {
+  const hold = join(inbox, INBOX_HOLD);
+  for (const file of await readPointerDirectory(hold, "empty")) {
+    const dest = join(inbox, file.name);
+    if (await exists(dest)) {
+      await unlink(join(hold, file.name));
+    } else {
+      await rename(join(hold, file.name), dest);
+    }
+  }
+  await rm(hold, { recursive: true, force: true });
 }
 
 function renderGates(rows: readonly Gate[]): string {
@@ -1447,10 +1479,17 @@ export function openStore(
       drain: async () => {
         await beginWrite();
         const inbox = join(store, "inbox");
+        await restoreInboxHold(inbox);
         const files = await readPointers(inbox);
+        const hold = join(inbox, INBOX_HOLD);
+        await mkdir(hold);
+        for (const { name } of files) {
+          await link(join(inbox, name), join(hold, name));
+        }
         for (const { name } of files) {
           await unlink(join(inbox, name));
         }
+        await rm(hold, { recursive: true, force: true });
         return files.map(({ pointer }) => pointer);
       },
       peek: async () => {
